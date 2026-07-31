@@ -1,0 +1,25 @@
+# Secrets — never commit
+.env
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+
+# Local data (regenerate: prepare_real_data.py, seed_demo.py)
+data/veldwys.db
+data/uploads/
+data/real_sites.csv
+data/real_grazing.csv
+
+# Raw dataset media (3.4 GB of site photos + reference material, not read by the code).
+# The field forms the pipeline actually parses are committed.
+archive/pictures/
+archive/supportive_material/
+
+# Local tooling
+.claude/
+.idea/
+
+# OS
+.DS_Store

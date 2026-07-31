@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#465c2b">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="VeldWys">
+<title>VeldWys — Farm Command Centre</title>
+<link rel="manifest" href="/manifest.json">
+<link rel="apple-touch-icon" href="/static/icon.svg">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <span>🐄</span>
+    <div>
+      <div>VeldWys</div>
+      <div class="brand-sub" id="farm-label"></div>
+    </div>
+  </div>
+  <div class="header-actions">
+    <button class="lang-badge" id="lang-badge" onclick="openLangPicker()">EN</button>
+  </div>
+</header>
+<div id="offline-banner" data-i18n="offline_banner"></div>
+
+<!-- ══════════ AUTH ══════════ -->
+<div id="view-auth" class="view active">
+  <div class="content-scroll" style="display:flex;flex-direction:column;justify-content:center;">
+    <div class="form-container glass">
+      <div style="text-align:center;font-size:46px;margin-bottom:10px;">🌾</div>
+      <h2 id="auth-title" data-i18n="welcome_title"></h2>
+      <p class="subtitle" id="auth-subtitle" data-i18n="welcome_sub"></p>
+      <ul class="cap-list" id="cap-list">
+        <li data-i18n="cap_1"></li><li data-i18n="cap_2"></li>
+        <li data-i18n="cap_3"></li><li data-i18n="cap_4"></li>
+      </ul>
+      <input type="text" id="username" data-i18n-ph="username" autocomplete="username">
+      <input type="password" id="password" data-i18n-ph="password" autocomplete="current-password">
+      <button class="btn-primary" id="auth-btn" onclick="doAuth()" data-i18n="signin"></button>
+      <button class="btn-text" id="auth-toggle" onclick="toggleAuthMode()" data-i18n="no_account"></button>
+      <div id="auth-error" style="color:var(--red);font-size:13.5px;text-align:center;margin-top:10px;display:none;font-weight:650;"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════ ONBOARDING ══════════ -->
+<div id="view-onboarding" class="view">
+  <div class="content-scroll">
+    <div class="form-container glass">
+      <div class="ob-dots">
+        <div class="ob-dot active" id="dot-1"></div><div class="ob-dot" id="dot-2"></div>
+        <div class="ob-dot" id="dot-3"></div><div class="ob-dot" id="dot-4"></div><div class="ob-dot" id="dot-5"></div>
+      </div>
+
+      <div id="ob-step-1" class="ob-step active">
+        <h2 data-i18n="choose_lang"></h2>
+        <p class="subtitle" data-i18n="choose_lang_sub"></p>
+        <div class="lang-grid" id="ob-lang-grid"></div>
+        <button class="btn-primary" onclick="obStep(2)" data-i18n="next"></button>
+      </div>
+
+      <div id="ob-step-2" class="ob-step">
+        <h2 data-i18n="farm_where"></h2>
+        <p class="subtitle" data-i18n="farm_where_sub"></p>
+        <label class="field" data-i18n="farm_name"></label>
+        <input type="text" id="ob-farmname" data-i18n-ph="farm_name_ph">
+        <div id="ob-map"></div>
+        <div class="region-tag" id="ob-region" style="display:none;">📍 <span></span></div>
+        <input type="hidden" id="ob-lat"><input type="hidden" id="ob-lon">
+        <button class="btn-primary" onclick="obStep(3)" data-i18n="next"></button>
+        <button class="btn-text" onclick="obStep(1)" data-i18n="back"></button>
+      </div>
+
+      <div id="ob-step-3" class="ob-step">
+        <h2 data-i18n="herd_title"></h2>
+        <p class="subtitle" data-i18n="herd_sub"></p>
+        <label class="field" data-i18n="camp_area"></label>
+        <input type="number" inputmode="numeric" id="ob-area" placeholder="2000">
+        <div class="stat-grid" style="grid-template-columns:repeat(3,1fr);margin-top:14px;">
+          <div class="stat-card"><input type="number" inputmode="numeric" id="ob-cattle" placeholder="0" style="text-align:center;font-size:20px;font-weight:800;color:var(--primary);border:none;background:transparent;padding:0;margin:0;"><div class="lbl" data-i18n="cattle"></div></div>
+          <div class="stat-card"><input type="number" inputmode="numeric" id="ob-goats" placeholder="0" style="text-align:center;font-size:20px;font-weight:800;color:var(--primary);border:none;background:transparent;padding:0;margin:0;"><div class="lbl" data-i18n="goats"></div></div>
+          <div class="stat-card"><input type="number" inputmode="numeric" id="ob-sheep" placeholder="0" style="text-align:center;font-size:20px;font-weight:800;color:var(--primary);border:none;background:transparent;padding:0;margin:0;"><div class="lbl" data-i18n="sheep"></div></div>
+        </div>
+        <button class="btn-primary" style="margin-top:16px;" onclick="obStep(4)" data-i18n="next"></button>
+        <button class="btn-text" onclick="obStep(2)" data-i18n="back"></button>
+      </div>
+
+      <div id="ob-step-4" class="ob-step">
+        <div style="text-align:center;font-size:44px;margin-bottom:10px;">💉</div>
+        <h2 data-i18n="vacc_title"></h2>
+        <p class="subtitle" data-i18n="vacc_sub"></p>
+        <button class="btn-primary" onclick="finishOnboarding(true)" data-i18n="vacc_yes"></button>
+        <button class="btn-primary btn-secondary" onclick="finishOnboarding(false)" data-i18n="vacc_no"></button>
+      </div>
+
+      <div id="ob-step-5" class="ob-step" style="text-align:center;">
+        <div style="font-size:56px;margin-bottom:14px;">🌾</div>
+        <h2 data-i18n="ob_done_title"></h2>
+        <p class="subtitle" data-i18n="ob_done_sub"></p>
+        <button class="btn-primary" onclick="switchView('dashboard')" data-i18n="go_dash"></button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════ DASHBOARD ══════════ -->
+<div id="view-dashboard" class="view">
+  <div class="content-scroll">
+    <button class="brief-btn" onclick="playBriefing()"><span id="brief-icon">🔊</span> <span data-i18n="brief_play"></span></button>
+    <div class="brief-text" id="brief-text"></div>
+
+    <div class="section-label" data-i18n="alerts"></div>
+    <div id="insights-list"><div class="empty">…</div></div>
+
+    <div class="section-label" style="margin-top:24px;">📊 <span data-i18n="herd_title_tab"></span></div>
+    <div class="stat-grid">
+      <div class="stat-card"><div class="val" id="s-animals">0</div><div class="lbl" data-i18n="stat_animals"></div></div>
+      <div class="stat-card"><div class="val" id="s-lsu">0</div><div class="lbl" data-i18n="stat_lsu"></div></div>
+      <div class="stat-card"><div class="val" id="s-land">0</div><div class="lbl" data-i18n="stat_land"></div></div>
+      <div class="stat-card"><div class="val sm" id="s-region">—</div><div class="lbl" data-i18n="stat_region"></div></div>
+    </div>
+
+    <div class="section-label" data-i18n="quick_actions"></div>
+    <div class="qa-grid">
+      <button class="qa-btn" onclick="openAnimalModal()"><span class="ico">🐄</span><span data-i18n="add_animal"></span></button>
+      <button class="qa-btn" onclick="openScan()"><span class="ico">📓</span><span data-i18n="scan_notebook"></span></button>
+      <button class="qa-btn" onclick="openEventModal()"><span class="ico">📝</span><span data-i18n="log_event"></span></button>
+      <button class="qa-btn" onclick="exportCsv()"><span class="ico">📤</span><span data-i18n="export_csv"></span></button>
+    </div>
+
+    <div class="section-label" data-i18n="upcoming"></div>
+    <div id="upcoming-list"></div>
+  </div>
+</div>
+
+<!-- ══════════ HERD ══════════ -->
+<div id="view-herd" class="view">
+  <div class="content-scroll">
+    <h2 data-i18n="herd_title_tab" style="margin-bottom:14px;"></h2>
+    <input type="text" id="herd-search" data-i18n-ph="search_animals" oninput="renderAnimals()">
+    <div class="filter-row" id="herd-filters"></div>
+    <div class="animal-grid" id="animal-list"></div>
+    <button class="btn-primary" style="margin-top:16px;" onclick="openAnimalModal()" data-i18n="add_animal"></button>
+  </div>
+</div>
+
+<!-- ══════════ ANALYTICS ══════════ -->
+<div id="view-analytics" class="view">
+  <div class="content-scroll">
+    <h2 data-i18n="analytics_title" style="margin-bottom:4px;"></h2>
+    <p class="subtitle" data-i18n="analytics_sub"></p>
+    <div id="analytics-body"><div class="empty">…</div></div>
+  </div>
+</div>
+
+<!-- ══════════ CHAT ══════════ -->
+<div id="view-chat" class="view">
+  <div class="chat-bar">
+    <button class="chat-bar-btn" onclick="openChatDrawer()" title="Chats">☰</button>
+    <div class="chat-title" id="chat-title"></div>
+    <button class="chat-bar-btn" onclick="startNewChat()" title="New">✚</button>
+    <button class="chat-bar-btn" id="convo-btn" onclick="toggleConversation()" title="Conversation">🎧</button>
+  </div>
+  <div class="chat-scroll" id="chat"></div>
+  <div id="convo-status" class="convo-status"></div>
+  <div class="chips-row" id="chips-row"></div>
+  <div class="chat-input-container">
+    <button class="attach-btn" onclick="document.getElementById('doc-file').click()" title="Attach">📎</button>
+    <input type="file" id="doc-file" accept=".txt,.md,.csv,.pdf,image/*" style="display:none" onchange="uploadDoc()">
+    <input type="text" id="chat-input" data-i18n-ph="chat_ph" onkeypress="if(event.key==='Enter')sendChat()">
+    <button class="mic-btn" id="mic-btn">🎙️</button>
+    <button class="send-btn" onclick="sendChat()">➤</button>
+  </div>
+</div>
+
+<!-- ══════════ SETTINGS ══════════ -->
+<div id="view-settings" class="view">
+  <div class="content-scroll">
+    <!-- Profile -->
+    <div class="card profile-card">
+      <div class="avatar" id="p-avatar">?</div>
+      <div style="flex:1;min-width:0;">
+        <div class="profile-name" id="p-display-name"></div>
+        <div class="profile-meta" id="p-display-meta"></div>
+      </div>
+    </div>
+    <div class="stat-grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:16px;">
+      <div class="stat-card"><div class="val" id="p-stat-animals">0</div><div class="lbl" data-i18n="stat_animals"></div></div>
+      <div class="stat-card"><div class="val" id="p-stat-events">0</div><div class="lbl" data-i18n="stat_records"></div></div>
+      <div class="stat-card"><div class="val" id="p-stat-chats">0</div><div class="lbl" data-i18n="stat_chats"></div></div>
+    </div>
+
+    <div class="card">
+      <h3 data-i18n="you_title"></h3>
+      <div class="row-2">
+        <div><label class="field" data-i18n="your_name"></label><input type="text" id="p-fullname"></div>
+        <div><label class="field" data-i18n="your_role"></label>
+          <select id="p-role">
+            <option value="owner" data-i18n="role_owner"></option>
+            <option value="manager" data-i18n="role_manager"></option>
+            <option value="herder" data-i18n="role_herder"></option>
+            <option value="extension" data-i18n="role_extension"></option>
+          </select>
+        </div>
+      </div>
+      <label class="field" data-i18n="farm_name"></label>
+      <input type="text" id="p-farmname">
+      <label class="field" data-i18n="language"></label>
+      <select id="p-lang" onchange="pickLang(this.value);saveLangPref(this.value);">
+        <option value="en">English</option><option value="af">Afrikaans</option>
+        <option value="ng">Oshiwambo</option><option value="kj">Otjiherero</option>
+      </select>
+    </div>
+
+    <div class="card">
+      <h3 data-i18n="voice_title"></h3>
+      <label class="field" data-i18n="voice_gender"></label>
+      <select id="p-voice-gender" onchange="saveVoicePrefs()">
+        <option value="female" data-i18n="voice_female"></option>
+        <option value="male" data-i18n="voice_male"></option>
+      </select>
+      <label class="field"><span data-i18n="voice_speed"></span> <span id="speed-val">1.0×</span></label>
+      <input type="range" id="p-voice-speed" min="0.8" max="1.4" step="0.05" value="1"
+             oninput="document.getElementById('speed-val').textContent=(+this.value).toFixed(2)+'×'" onchange="saveVoicePrefs()">
+      <div class="row-2" style="margin-top:6px;">
+        <button class="btn-primary btn-secondary" style="margin:0;" onclick="testVoice()" data-i18n="voice_test"></button>
+        <label style="display:flex;align-items:center;gap:9px;font-size:14px;font-weight:650;">
+          <input type="checkbox" id="autospeak" style="width:auto;margin:0;" onchange="localStorage.setItem('veldwys_autospeak', this.checked)">
+          <span data-i18n="autospeak"></span>
+        </label>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3 data-i18n="land_title"></h3>
+      <label class="field" data-i18n="location"></label>
+      <div id="map"></div>
+      <div class="region-tag" id="p-region">📍 <span></span></div>
+      <input type="hidden" id="p-lat"><input type="hidden" id="p-lon">
+      <label class="field" data-i18n="camp_area"></label>
+      <input type="number" inputmode="numeric" id="p-area">
+      <div class="section-label" style="margin-top:14px;" data-i18n="herd_from_register"></div>
+      <div id="p-herd-readout" class="readout"></div>
+      <details style="margin-top:12px;">
+        <summary class="small-summary" data-i18n="starting_counts"></summary>
+        <p class="subtitle" style="margin:10px 0;font-size:13px;" data-i18n="starting_counts_help"></p>
+        <div class="row-2">
+          <div><label class="field" data-i18n="cattle"></label><input type="number" inputmode="numeric" id="p-cattle"></div>
+          <div><label class="field" data-i18n="goats"></label><input type="number" inputmode="numeric" id="p-goats"></div>
+        </div>
+        <div><label class="field" data-i18n="sheep"></label><input type="number" inputmode="numeric" id="p-sheep"></div>
+      </details>
+    </div>
+
+    <div class="card">
+      <h3 data-i18n="docs_title"></h3>
+      <p class="subtitle" style="font-size:13px;" data-i18n="docs_sub"></p>
+      <div id="docs-list"></div>
+    </div>
+
+    <button class="btn-primary" onclick="saveProfile()" data-i18n="save"></button>
+    <button class="btn-text" onclick="logout()" data-i18n="logout"></button>
+  </div>
+</div>
+
+<!-- ══════════ NAV ══════════ -->
+<div class="bottom-nav">
+  <div class="nav-item active" id="nav-dashboard" onclick="switchView('dashboard')"><span class="nav-icon">🏡</span><span data-i18n="nav_home"></span></div>
+  <div class="nav-item" id="nav-herd" onclick="switchView('herd')"><span class="nav-icon">🐄</span><span data-i18n="nav_herd"></span></div>
+  <div class="nav-item" id="nav-chat" onclick="switchView('chat')"><span class="nav-icon">💬</span><span data-i18n="nav_chat"></span></div>
+  <div class="nav-item" id="nav-analytics" onclick="switchView('analytics')"><span class="nav-icon">📈</span><span data-i18n="nav_analytics"></span></div>
+  <div class="nav-item" id="nav-settings" onclick="switchView('settings')"><span class="nav-icon">⚙️</span><span data-i18n="nav_settings"></span></div>
+</div>
+
+<!-- ══════════ MODALS ══════════ -->
+<div class="modal" id="modal"><div class="modal-content" id="modal-content"></div></div>
+<div class="toast" id="toast"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="/static/i18n.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>
