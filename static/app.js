@@ -8,6 +8,30 @@ let state = { profile: null, animals: [], events: [], insights: [], herdFilter: 
               chats: [], chatId: null, docs: [], analytics: null };
 let currentAudio = null;
 
+/* iOS will not play audio from an <audio> element that a user gesture has never
+   touched. Chat replies speak on their own, and `new Audio()` per reply meant every
+   element was brand new and therefore blocked — play() rejected, and we fell through
+   to the browser's robotic speechSynthesis voice. That is the "it's just reading and
+   doesn't sound like Afrikaans" bug: the real Afrikaans audio was fetched fine and
+   then never allowed to play.
+   So: ONE element, primed on the farmer's first tap, reused for every reply. */
+const SILENT_WAV = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=";
+let audioEl = null;
+
+function getPlayer() {
+  if (!audioEl) { audioEl = new Audio(); audioEl.preload = "auto"; }
+  return audioEl;
+}
+
+function unlockAudio() {
+  const p = getPlayer();
+  if (p.dataset.unlocked) return;
+  p.src = SILENT_WAV;
+  p.play().then(() => { p.pause(); p.currentTime = 0; p.dataset.unlocked = "1"; }).catch(() => {});
+}
+["touchend", "click", "keydown"].forEach(ev =>
+  document.addEventListener(ev, unlockAudio, { passive: true }));
+
 const CHIP_KEYS = ["chip_overgrazed", "chip_stocking", "chip_move", "chip_lastyear",
                    "chip_bush", "chip_howlong", "chip_vacc", "chip_tenure"];
 const SPECIES_ICON = { cattle: "🐄", goat: "🐐", sheep: "🐑", other: "🐾" };
@@ -66,6 +90,16 @@ function toast(msg) {
 }
 
 /* ─────────────── auth ─────────────── */
+/* Questions a Namibian farmer can still answer in two years. Deliberately about the
+   farm and the family rather than trivia they may never have had an answer to. */
+const RECOVERY_QUESTIONS = ["rq_first_animal", "rq_mother_village", "rq_school", "rq_nickname"];
+
+function buildRecoveryQuestions() {
+  const sel = document.getElementById("recovery-question");
+  if (!sel) return;
+  sel.innerHTML = RECOVERY_QUESTIONS.map(k => `<option value="${k}">${t(k)}</option>`).join("");
+}
+
 function toggleAuthMode() {
   isSignup = !isSignup;
   document.getElementById("auth-btn").textContent = t(isSignup ? "signup" : "signin");
@@ -73,6 +107,9 @@ function toggleAuthMode() {
   document.getElementById("auth-subtitle").textContent = t(isSignup ? "signup_sub" : "welcome_sub");
   document.getElementById("cap-list").style.display = isSignup ? "none" : "block";
   document.getElementById("auth-error").style.display = "none";
+  document.getElementById("recovery-setup").style.display = isSignup ? "block" : "none";
+  document.getElementById("forgot-link").style.display = isSignup ? "none" : "block";
+  if (isSignup) buildRecoveryQuestions();
 }
 
 async function doAuth() {
@@ -81,7 +118,15 @@ async function doAuth() {
   if (!u || !p) return;
   const err = document.getElementById("auth-error");
   try {
-    if (isSignup) await post("/api/signup", { username: u, password: p }, false);
+    if (isSignup) {
+      const qKey = document.getElementById("recovery-question").value;
+      const ans = document.getElementById("recovery-answer").value.trim();
+      if (!ans) { err.textContent = t("err_need_answer"); err.style.display = "block"; return; }
+      // Store the key, not the translated text, so the question still resolves if the
+      // farmer later switches language.
+      await post("/api/signup", { username: u, password: p,
+                                  recovery_question: qKey, recovery_answer: ans }, false);
+    }
     const data = await post("/api/login", { username: u, password: p }, false);
     userId = data.user_id;
     localStorage.setItem("veldwys_user_id", userId);
@@ -95,13 +140,69 @@ async function doAuth() {
   }
 }
 
+/* ─────────────── forgot password ─────────────── */
+async function openForgot() {
+  showModal(`
+    <div class="modal-head"><h3>${t("forgot_title")}</h3><button class="modal-close" onclick="closeModal()">×</button></div>
+    <p class="subtitle">${t("forgot_sub")}</p>
+    <label class="field">${t("username")}</label>
+    <input type="text" id="fp-user" autocomplete="username">
+    <div class="fp-err" id="fp-err"></div>
+    <button class="btn-primary" onclick="forgotLookup()">${t("next")}</button>`);
+  const u = document.getElementById("username").value.trim();
+  if (u) document.getElementById("fp-user").value = u;
+}
+
+function fpError(key) {
+  const el = document.getElementById("fp-err");
+  el.textContent = t(key); el.classList.add("on");
+}
+
+async function forgotLookup() {
+  const u = document.getElementById("fp-user").value.trim();
+  if (!u) return;
+  let question;
+  try {
+    question = (await post("/api/recovery/question", { username: u }, false)).question;
+  } catch {
+    return fpError("forgot_none");
+  }
+  // Stored as a key so it follows the farmer's current language.
+  const qText = I18N[LANG][question] || question;
+  showModal(`
+    <div class="modal-head"><h3>${t("forgot_title")}</h3><button class="modal-close" onclick="closeModal()">×</button></div>
+    <p class="subtitle">${esc(qText)}</p>
+    <label class="field">${t("recovery_a_ph")}</label>
+    <input type="text" id="fp-answer" autocomplete="off">
+    <label class="field">${t("forgot_new")}</label>
+    <input type="password" id="fp-new" autocomplete="new-password">
+    <div class="fp-err" id="fp-err"></div>
+    <button class="btn-primary" onclick="forgotReset('${esc(u)}')">${t("forgot_save")}</button>`);
+}
+
+async function forgotReset(username) {
+  const answer = document.getElementById("fp-answer").value.trim();
+  const pw = document.getElementById("fp-new").value;
+  if (!answer || !pw) return;
+  try {
+    await post("/api/recovery/reset", { username, answer, new_password: pw }, false);
+  } catch (e) {
+    let d = String(e.message || e); try { d = JSON.parse(d).detail || d; } catch {}
+    return fpError(d === "too_many" ? "forgot_locked" : d === "short_password" ? "forgot_short" : "forgot_wrong");
+  }
+  closeModal();
+  toast("✅ " + t("forgot_done"));
+  document.getElementById("username").value = username;
+  document.getElementById("password").value = "";
+}
+
 function logout() {
   localStorage.removeItem("veldwys_user_id");
-  userId = null; state = { profile: null, animals: [], events: [], insights: [], herdFilter: "all" };
-  document.body.classList.remove("authed");
-  document.getElementById("chat").innerHTML = "";
-  document.getElementById("password").value = "";
-  switchView("auth");
+  for (let i = localStorage.length - 1; i >= 0; i--) {
+    const key = localStorage.key(i);
+    if (key && key.startsWith("vw_")) localStorage.removeItem(key);
+  }
+  window.location.reload();
 }
 
 /* ─────────────── navigation ─────────────── */
@@ -110,6 +211,9 @@ function switchView(name) {
   document.getElementById("view-" + name).classList.add("active");
   document.querySelectorAll(".nav-item").forEach(n => n.classList.remove("active"));
   document.getElementById("nav-" + name)?.classList.add("active");
+  // Sync desktop nav
+  document.querySelectorAll(".desktop-nav a").forEach(n => n.classList.remove("active"));
+  document.getElementById("dnav-" + name)?.classList.add("active");
   if (name === "settings") setTimeout(() => initMap("map"), 60);
   if (name === "onboarding") setTimeout(() => initMap("ob-map"), 60);
   if (name === "chat") { loadChats(); if (!document.getElementById("chat").children.length) renderChatGreeting(); }
@@ -117,7 +221,9 @@ function switchView(name) {
   if (name === "herd") renderAnimals();
   if (name === "analytics") refreshAnalytics();
   if (name === "settings") loadDocs();
-  if (name !== "chat") stopConversation();
+  // Leaving for anywhere other than the voice screen itself ends the conversation.
+  if (name !== "chat" && name !== "voice") stopConversation();
+  document.body.classList.toggle("in-voice", name === "voice");
 }
 
 /* ─────────────── language ─────────────── */
@@ -126,10 +232,22 @@ function buildLangGrid() {
   grid.innerHTML = Object.keys(I18N).map(code =>
     `<div class="lang-option ${code === LANG ? "selected" : ""}" data-lang="${code}" onclick="pickLang('${code}')">
        <span>${I18N[code]._native}</span><small>${I18N[code]._name}</small></div>`).join("");
+  buildLangSelect();
+}
+
+/* Settings used to hard-code the four <option>s, so adding a language meant editing
+   the list in three places and forgetting one. */
+function buildLangSelect() {
+  const sel = document.getElementById("p-lang");
+  if (!sel) return;
+  sel.innerHTML = Object.keys(I18N).map(c =>
+    `<option value="${c}" ${c === LANG ? "selected" : ""}>${I18N[c]._native}</option>`).join("");
 }
 function pickLang(code) {
   setLang(code);
   document.querySelectorAll(".lang-option").forEach(el => el.classList.toggle("selected", el.dataset.lang === code));
+  const sel = document.getElementById("p-lang");
+  if (sel) sel.value = code;
   updateLangBadge(); renderAll();
 }
 function updateLangBadge() { document.getElementById("lang-badge").textContent = LANG.toUpperCase(); }
@@ -149,11 +267,112 @@ async function saveLangPref(code) {
 
 /* ─────────────── onboarding ─────────────── */
 function obStep(n) {
+  // You could previously finish onboarding with a blank farm name and no location,
+  // which leaves the advisor with no rainfall, no region and nothing to ground on.
+  if (n === 3) {
+    const err = document.getElementById("ob-step2-err");
+    const name = document.getElementById("ob-farmname").value.trim();
+    const hasPin = !!document.getElementById("ob-lat").value;
+    if (!name || !hasPin) {
+      err.textContent = t(!name ? "err_need_farmname" : "err_need_location");
+      err.classList.add("on");
+      return;
+    }
+    err.classList.remove("on");
+  }
   document.querySelectorAll(".ob-step").forEach(el => el.classList.remove("active"));
   document.querySelectorAll(".ob-dot").forEach(el => el.classList.remove("active"));
   document.getElementById("ob-step-" + n).classList.add("active");
   document.getElementById("dot-" + n).classList.add("active");
   if (n === 2) setTimeout(() => initMap("ob-map"), 60);
+}
+
+/* ─────────────── finding the farm ─────────────── */
+/* Dropping a pin from a zoom-5 view of the whole country is not something a farmer
+   should have to do. GPS first, then search, then tap as the fallback. */
+function setPin(isOb, lat, lon, zoom = 14) {
+  const m = isOb ? obMap : map;
+  document.getElementById(isOb ? "ob-lat" : "p-lat").value = lat.toFixed(5);
+  document.getElementById(isOb ? "ob-lon" : "p-lon").value = lon.toFixed(5);
+  if (m) {
+    const mk = isOb ? obMarker : marker;
+    if (mk) m.removeLayer(mk);
+    const nm = L.marker([lat, lon]).addTo(m);
+    if (isOb) obMarker = nm; else marker = nm;
+    m.setView([lat, lon], zoom);
+    setTimeout(() => m.invalidateSize(), 60);
+  }
+  showRegion(isOb, lat, lon);
+  document.getElementById(isOb ? "ob-step2-err" : "p-place")?.classList?.remove("on");
+}
+
+function locateMsg(isOb, key, kind = "info") {
+  const el = document.getElementById(isOb ? "ob-locate-msg" : "p-locate-msg");
+  if (!el) return;
+  el.textContent = key ? t(key) : "";
+  el.className = "locate-msg" + (key ? " on " + kind : "");
+}
+
+function useMyLocation(isOb) {
+  const btn = document.getElementById(isOb ? "ob-locate" : "p-locate");
+  if (!navigator.geolocation) return locateMsg(isOb, "loc_unsupported", "warn");
+  btn.disabled = true;
+  locateMsg(isOb, "loc_finding");
+  navigator.geolocation.getCurrentPosition(
+    pos => {
+      btn.disabled = false;
+      setPin(isOb, pos.coords.latitude, pos.coords.longitude, 15);
+      locateMsg(isOb, "loc_found", "ok");
+    },
+    err => {
+      btn.disabled = false;
+      // Each of these needs a different next step from the farmer, so don't collapse them.
+      locateMsg(isOb, err.code === 1 ? "loc_denied" : err.code === 3 ? "loc_timeout" : "loc_failed", "warn");
+    },
+    { enableHighAccuracy: true, timeout: 12000, maximumAge: 60000 }
+  );
+}
+
+let placeTimer;
+function onPlaceSearch(isOb, q) {
+  const box = document.getElementById(isOb ? "ob-place-results" : "p-place-results");
+  const local = searchPlaces(q);
+  renderPlaceResults(isOb, box, local, false);
+  clearTimeout(placeTimer);
+  // Local list answers instantly and offline; the geocoder is a bonus when there is
+  // signal, never the thing the farmer waits on.
+  if (q.trim().length >= 3 && navigator.onLine) {
+    placeTimer = setTimeout(async () => {
+      try {
+        const r = await fetch("https://nominatim.openstreetmap.org/search?format=json&countrycodes=na&limit=5&q="
+                              + encodeURIComponent(q), { headers: { "Accept-Language": "en" } });
+        const remote = (await r.json()).map(x => ({
+          name: x.display_name.split(",")[0], lat: +x.lat, lon: +x.lon,
+          region: regionOf(+x.lat, +x.lon), remote: true,
+        })).filter(x => !local.some(l => l.name.toLowerCase() === x.name.toLowerCase()));
+        renderPlaceResults(isOb, box, local.concat(remote), true);
+      } catch { /* offline or rate-limited: the local list already answered */ }
+    }, 450);
+  }
+}
+
+function renderPlaceResults(isOb, box, hits, _online) {
+  if (!hits.length) { box.innerHTML = ""; box.classList.remove("on"); return; }
+  box.classList.add("on");
+  box.innerHTML = hits.map(h => `
+    <div class="place-hit" onclick="choosePlace(${isOb}, ${h.lat}, ${h.lon}, ${JSON.stringify(h.name).replace(/"/g, "&quot;")})">
+      <span class="place-name">${esc(h.name)}</span>
+      <span class="place-region">${esc(h.region)}${h.remote ? " · 🌐" : ""}</span>
+    </div>`).join("");
+}
+
+function choosePlace(isOb, lat, lon, name) {
+  setPin(isOb, lat, lon, 13);
+  const input = document.getElementById(isOb ? "ob-place" : "p-place");
+  if (input) input.value = name;
+  const box = document.getElementById(isOb ? "ob-place-results" : "p-place-results");
+  box.innerHTML = ""; box.classList.remove("on");
+  locateMsg(isOb, "loc_pin_hint", "info");
 }
 
 async function finishOnboarding(applyVacc) {
@@ -496,51 +715,155 @@ async function saveEvent(animalId) {
 function exportCsv() { window.location = `/api/export/herd.csv?user_id=${userId}`; }
 
 /* ─────────────── notebook scan ─────────────── */
+/* No `capture` attribute: on some Android browsers it forces the camera and removes
+   the option to pick pages the farmer already photographed. */
 function openScan() {
   showModal(`
     <div class="modal-head"><h3>📓 ${t("scan_title")}</h3><button class="modal-close" onclick="closeModal()">×</button></div>
     <p class="subtitle">${t("scan_sub")}</p>
-    <input type="file" accept="image/*" capture="environment" id="scan-file" onchange="runScan()">
+    <input type="file" accept="image/*" multiple id="scan-file" onchange="runScan()">
+    <div id="scan-progress"></div>
     <div id="scan-out"></div>`);
 }
 
-async function runScan() {
-  const f = document.getElementById("scan-file").files[0]; if (!f) return;
-  const out = document.getElementById("scan-out");
-  out.innerHTML = `<div class="empty">${t("scan_reading")}</div>`;
-  const fd = new FormData(); fd.append("file", f);
-  try {
-    const res = await fetch("/api/scan_notebook", { method: "POST", body: fd });
-    if (!res.ok) throw new Error(await res.text());
-    const data = await res.json();
-    if (!data.animals?.length) { out.innerHTML = `<div class="empty">${t("scan_none")}</div>`; return; }
-    window._scanned = data.animals.map(a => ({ ...a, events: (data.events || []).filter(e => e.animal_tag && e.animal_tag === a.tag) }));
-    out.innerHTML = `<div class="section-label">${t("scan_review")} (${window._scanned.length})</div>` +
-      window._scanned.map((a, i) => `
-        <div class="card" style="padding:13px;">
-          <div class="row-2">
-            <div><label class="field">${t("tag")}</label><input value="${esc(a.tag || "")}" oninput="_scanned[${i}].tag=this.value"></div>
-            <div><label class="field">${t("species")}</label>
-              <select onchange="_scanned[${i}].species=this.value">
-                ${["cattle", "goat", "sheep", "other"].map(s => `<option value="${s}" ${a.species === s ? "selected" : ""}>${SPECIES_ICON[s]} ${s}</option>`).join("")}
-              </select></div>
-          </div>
-          <div class="row-2">
-            <div><label class="field">${t("name")}</label><input value="${esc(a.name || "")}" oninput="_scanned[${i}].name=this.value"></div>
-            <div><label class="field">${t("breed")}</label><input value="${esc(a.breed || "")}" oninput="_scanned[${i}].breed=this.value"></div>
-          </div>
-          ${a.notes ? `<div style="font-size:12.5px;color:var(--text-light);margin-top:6px;">${esc(a.notes)}</div>` : ""}
-        </div>`).join("") +
-      `<button class="btn-primary" onclick="confirmScan()">${t("scan_confirm")}</button>`;
-  } catch (e) {
-    let msg = String(e.message || e); try { msg = JSON.parse(msg).detail || msg; } catch {}
-    out.innerHTML = `<div class="empty">${esc(msg)}</div>`;
+/* A phone page photo is 3-5 MB. Anthropic works from ~1568px on the long edge, so
+   anything above that is upload time and tokens spent on nothing — and oversized
+   images were being rejected outright on rural data. */
+const SCAN_MAX_EDGE = 1568;
+
+function downscaleImage(file) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const scale = Math.min(1, SCAN_MAX_EDGE / Math.max(img.width, img.height));
+      if (scale === 1 && file.size < 1_500_000) return resolve(file);
+      const c = document.createElement("canvas");
+      c.width = Math.round(img.width * scale);
+      c.height = Math.round(img.height * scale);
+      const ctx = c.getContext("2d");
+      ctx.imageSmoothingQuality = "high";
+      ctx.drawImage(img, 0, 0, c.width, c.height);
+      c.toBlob(b => resolve(b || file), "image/jpeg", 0.85);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(file); };   // send the original rather than nothing
+    img.src = url;
+  });
+}
+
+async function scanOnePage(file) {
+  const shrunk = await downscaleImage(file);
+  const fd = new FormData();
+  fd.append("file", shrunk, "page.jpg");
+  const res = await fetch("/api/scan_notebook", { method: "POST", body: fd });
+  if (!res.ok) {
+    let msg = res.statusText;
+    try { msg = (await res.json()).detail || msg; } catch {}
+    throw new Error(msg);
   }
+  return res.json();
+}
+
+async function runScan() {
+  const files = [...document.getElementById("scan-file").files];
+  if (!files.length) return;
+  const out = document.getElementById("scan-out");
+  const prog = document.getElementById("scan-progress");
+  out.innerHTML = "";
+
+  window._scanned = [];
+  window._scanEvents = [];
+  const warnings = [], layouts = [], failed = [];
+
+  for (let i = 0; i < files.length; i++) {
+    prog.innerHTML = `<div class="empty">${t("scan_reading")} ${i + 1}/${files.length}</div>`;
+    try {
+      const data = await scanOnePage(files[i]);
+      layouts.push({ page: i + 1, layout: data.layout || "" });
+      (data.warnings || []).forEach(w => warnings.push(`p${i + 1}: ${w}`));
+      // Attach events to their animal where the tag matches; keep the rest instead of
+      // dropping them silently, which is what used to happen.
+      const animals = (data.animals || []).map(a => ({ ...a, _page: i + 1, events: [] }));
+      const byTag = new Map(animals.filter(a => a.tag).map(a => [a.tag, a]));
+      for (const ev of (data.events || [])) {
+        const owner = byTag.get((ev.animal_tag || "").trim());
+        if (owner) owner.events.push(ev);
+        else window._scanEvents.push({ ...ev, _page: i + 1 });
+      }
+      window._scanned.push(...animals);
+    } catch (e) {
+      failed.push(`p${i + 1}: ${String(e.message || e)}`);
+    }
+  }
+  prog.innerHTML = "";
+  renderScanReview(out, { warnings, layouts, failed, pages: files.length });
+}
+
+function renderScanReview(out, meta) {
+  const list = window._scanned || [];
+  const evs = window._scanEvents || [];
+  if (!list.length && !evs.length) {
+    out.innerHTML = `<div class="empty">${t("scan_none")}</div>` +
+      (meta.failed.length ? `<div class="scan-warn">${meta.failed.map(esc).join("<br>")}</div>` : "");
+    return;
+  }
+  // Anything uncertain floats to the top — that is where the farmer's attention is worth most.
+  list.sort((a, b) => (b.needs_review ? 1 : 0) - (a.needs_review ? 1 : 0));
+
+  const layoutBlock = meta.layouts.map(l => `
+    <details class="scan-layout"><summary>${t("scan_readas")} — ${t("scan_page")} ${l.page}</summary>
+      <pre>${esc(l.layout || "—")}</pre></details>`).join("");
+
+  out.innerHTML =
+    layoutBlock +
+    (meta.failed.length ? `<div class="scan-warn">⚠️ ${meta.failed.map(esc).join("<br>")}</div>` : "") +
+    (meta.warnings.length ? `<div class="scan-warn">⚠️ ${meta.warnings.map(esc).join("<br>")}</div>` : "") +
+    `<div class="section-label">${t("scan_review")} (${list.length})</div>` +
+    list.map((a, i) => `
+      <div class="card ${a.needs_review ? "needs-review" : ""}" style="padding:13px;">
+        ${a.needs_review ? `<div class="review-flag">${t("scan_check")}</div>` : ""}
+        <div class="row-2">
+          <div><label class="field">${t("tag")}</label><input value="${esc(a.tag || "")}" placeholder="${t("scan_notag")}" oninput="_scanned[${i}].tag=this.value"></div>
+          <div><label class="field">${t("species")}</label>
+            <select onchange="_scanned[${i}].species=this.value">
+              ${["cattle", "goat", "sheep", "other"].map(s => `<option value="${s}" ${a.species === s ? "selected" : ""}>${SPECIES_ICON[s]} ${t(s === "cattle" ? "cattle" : s === "goat" ? "goats" : s === "sheep" ? "sheep" : "other_species")}</option>`).join("")}
+            </select></div>
+        </div>
+        <div class="row-2">
+          <div><label class="field">${t("sex")}</label>
+            <select onchange="setScanSex(${i}, this.value)">
+              ${[["", t("scan_unknown")], ["female", t("sex_female")], ["male", t("sex_male")], ["castrated", t("sex_castrated")]]
+                .map(([v, lbl]) => `<option value="${v}" ${scanSexValue(a) === v ? "selected" : ""}>${lbl}</option>`).join("")}
+            </select></div>
+          <div><label class="field">${t("breed")}</label><input value="${esc(a.breed || "")}" oninput="_scanned[${i}].breed=this.value"></div>
+        </div>
+        <label class="field">${t("scan_description")}</label>
+        <input value="${esc(a.description || "")}" oninput="_scanned[${i}].description=this.value">
+        ${a.notes ? `<div style="font-size:12.5px;color:var(--text-light);margin-top:6px;">${esc(a.notes)}</div>` : ""}
+      </div>`).join("") +
+    (evs.length ? `<div class="section-label">${t("scan_events")} (${evs.length})</div>` +
+      evs.map(e => `<div class="event-row"><div class="event-main">
+        <div class="event-desc">${esc(e.description || e.event_type)}</div>
+        <div class="event-meta">${esc(e.event_date || "")} ${e.animal_tag ? "· " + esc(e.animal_tag) : ""}</div>
+      </div></div>`).join("") : "") +
+    `<button class="btn-primary" onclick="confirmScan()">${t("scan_confirm")}</button>`;
+}
+
+/* sex + castrated is one choice to a farmer, two fields to the database. */
+function scanSexValue(a) { return a.castrated ? "castrated" : (a.sex || ""); }
+function setScanSex(i, v) {
+  const a = window._scanned[i];
+  a.castrated = v === "castrated";
+  a.sex = v === "castrated" ? "male" : v;
 }
 
 async function confirmScan() {
-  await post(`/api/scan_notebook/confirm?user_id=${userId}`, { animals: window._scanned });
-  closeModal(); toast(`✅ ${window._scanned.length} ${t("stat_animals").toLowerCase()}`); await refreshAll();
+  const animals = window._scanned || [], events = window._scanEvents || [];
+  await post(`/api/scan_notebook/confirm?user_id=${userId}`, { animals, events });
+  closeModal();
+  toast(`✅ ${animals.length} ${t("stat_animals").toLowerCase()}`);
+  await refreshAll();
 }
 
 /* ─────────────── chat ─────────────── */
@@ -578,7 +901,7 @@ function appendMsg(text, sender, trace = [], skipExtras = false) {
   const vm = body.match(/\[(GREEN|AMBER|RED)\]/i);
   if (vm && sender === "bot") {
     const [cls, key] = VERDICTS[vm[1].toUpperCase()];
-    verdictHtml = `<div class="verdict ${cls}">${cls === "green" ? "🟢" : cls === "amber" ? "🟡" : "🔴"} ${t(key)}</div>`;
+    verdictHtml = `<div class="verdict ${cls}">${cls === "green" ? "✓" : cls === "amber" ? "◆" : "▲"} ${t(key)}</div>`;
     // Models sometimes still write the label after the marker ("[GREEN] fine"),
     // which would show the verdict twice. Drop it; the pill already says it.
     body = body
@@ -643,14 +966,17 @@ function renderTrace(trace) {
   return `<details class="trace"><summary>${t("reasoning")}</summary>${items}</details>`;
 }
 
-async function sendChat(fromVoice = false) {
+/* `spoken` lets voice mode pass its transcript straight in. It used to be written
+   into #chat-input as a scratch buffer, which clobbered anything the farmer had
+   half-typed. Returns the reply text so the voice screen can caption it. */
+async function sendChat(fromVoice = false, spoken = null) {
   const input = document.getElementById("chat-input");
-  const text = input.value.trim();
-  if (!text || !userId) return;
-  input.value = "";
+  const text = (spoken !== null ? spoken : input.value).trim();
+  if (!text || !userId) return null;
+  if (spoken === null) input.value = "";
   appendMsg(text, "user");
 
-  if (!navigator.onLine) { appendMsg(t("offline_chat"), "bot", [], true); return; }
+  if (!navigator.onLine) { appendMsg(t("offline_chat"), "bot", [], true); return null; }
 
   const chat = document.getElementById("chat");
   const loading = document.createElement("div");
@@ -667,11 +993,14 @@ async function sendChat(fromVoice = false) {
     if (data.chat_id) state.chatId = data.chat_id;
     appendMsg(data.text, "bot", data.trace || []);
     const auto = localStorage.getItem("veldwys_autospeak") === "true";
-    if (fromVoice || auto) speak(data.text.replace(/\[(GREEN|AMBER|RED)\]/i, ""));
+    const clean = data.text.replace(/\[(GREEN|AMBER|RED)\]/i, "").trim();
+    if (fromVoice || auto) await speak(clean);
     refreshAll();
+    return clean;
   } catch (e) {
     loading.remove();
     appendMsg(t("offline_chat"), "bot", [], true);
+    return null;
   }
 }
 
@@ -690,7 +1019,8 @@ function voicePrefs() {
 
 function stopSpeaking() {
   audioToken++;                       // invalidates any in-flight request
-  if (currentAudio) { currentAudio.pause(); currentAudio.src = ""; currentAudio = null; }
+  // Pause but keep the element — clearing src would throw away its unlocked state.
+  if (currentAudio) { try { currentAudio.pause(); currentAudio.currentTime = 0; } catch {} currentAudio = null; }
   if ("speechSynthesis" in window) speechSynthesis.cancel();
   if (speakingBtn) { setSpeakBtn(speakingBtn, "idle"); speakingBtn = null; }
 }
@@ -721,45 +1051,77 @@ async function speak(text, btn = null) {
     if (!res.ok) throw new Error("tts");
     const blob = await res.blob();
     if (token !== audioToken) return;             // user moved on while we were fetching
-    currentAudio = new Audio(URL.createObjectURL(blob));
-    currentAudio.playbackRate = speed;
-    currentAudio.onended = () => { if (token === audioToken) { setSpeakBtn(btn, "idle"); speakingBtn = null; } };
+    const player = getPlayer();
+    player.src = URL.createObjectURL(blob);
+    player.playbackRate = speed;
+    player.onended = () => { if (token === audioToken) { setSpeakBtn(btn, "idle"); speakingBtn = null; } };
+    currentAudio = player;
     setSpeakBtn(btn, "playing");
-    await currentAudio.play();
+    await player.play();
   } catch {
     if (token !== audioToken) return;
-    if ("speechSynthesis" in window) {            // offline / API failure fallback
+    // Only English has a browser voice worth hearing. Reading Afrikaans or Oshiwambo
+    // with a robotic en-ZA voice is worse than saying nothing — it sounds broken and
+    // it mangles the language we just spent the whole project getting right.
+    if (LANG === "en" && "speechSynthesis" in window) {
       const u = new SpeechSynthesisUtterance(clean);
-      u.lang = { af: "af-ZA", en: "en-ZA", ng: "en-ZA", kj: "en-ZA" }[LANG] || "en-ZA";
+      u.lang = "en-ZA";
       u.rate = speed;
       u.onend = () => { setSpeakBtn(btn, "idle"); speakingBtn = null; };
       speechSynthesis.speak(u);
       setSpeakBtn(btn, "playing");
-    } else { setSpeakBtn(btn, "idle"); speakingBtn = null; }
+    } else {
+      setSpeakBtn(btn, "idle"); speakingBtn = null;
+      toast("🔊 " + t("speak"));                  // tap Listen to play it
+    }
   }
 }
 
 let mediaRecorder, audioChunks = [], isRecording = false;
 const micBtn = document.getElementById("mic-btn");
 
+/* Ask for clean audio. Plain {audio:true} leaves the browser's noise suppression and
+   echo cancellation off, which is how the room ends up in the transcript. */
+const MIC_CONSTRAINTS = {
+  audio: {
+    echoCancellation: true, noiseSuppression: true, autoGainControl: true,
+    channelCount: 1, sampleRate: 16000,
+  },
+};
+
+/* iOS Safari records mp4, everyone else webm. Claiming webm for an mp4 blob made the
+   server write a .webm file that wasn't one. */
+function recorderMime() {
+  if (typeof MediaRecorder === "undefined") return "";
+  for (const m of ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg"]) {
+    if (MediaRecorder.isTypeSupported(m)) return m;
+  }
+  return "";
+}
+
+function micError() {
+  toast("🎤 " + t(location.protocol === "https:" ? "mic_blocked" : "mic_https"));
+}
+
 async function startRecording(e) {
   if (e) e.preventDefault();
   if (isRecording) return;
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    mediaRecorder = new MediaRecorder(stream);
+    const stream = await navigator.mediaDevices.getUserMedia(MIC_CONSTRAINTS);
+    const mime = recorderMime();
+    mediaRecorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
     audioChunks = [];
     mediaRecorder.ondataavailable = ev => audioChunks.push(ev.data);
     mediaRecorder.onstop = async () => {
       stream.getTracks().forEach(t0 => t0.stop());
-      await transcribe(new Blob(audioChunks, { type: "audio/webm" }));
+      await transcribe(new Blob(audioChunks, { type: mediaRecorder.mimeType || mime }));
     };
     mediaRecorder.start();
     isRecording = true;
     micBtn.classList.add("recording");
     document.getElementById("chat-input").placeholder = t("listening");
   } catch {
-    toast("🎤 " + (location.protocol === "https:" ? "Microphone blocked" : "Microphone needs HTTPS"));
+    micError();
   }
 }
 
@@ -772,8 +1134,17 @@ function stopRecording(e) {
   }
 }
 
+/* Extension has to match the container or Whisper is guessing from a lie. */
+function audioFilename(blob) {
+  const type = (blob.type || "").toLowerCase();
+  const ext = type.includes("mp4") ? "mp4" : type.includes("ogg") ? "ogg" : "webm";
+  return `audio.${ext}`;
+}
+
 async function transcribe(blob) {
-  const fd = new FormData(); fd.append("file", blob, "audio.webm");
+  const fd = new FormData();
+  fd.append("file", blob, audioFilename(blob));
+  fd.append("lang", LANG);          // Whisper needs telling, or it translates
   try {
     const res = await fetch("/api/transcribe", { method: "POST", body: fd });
     const data = await res.json();
@@ -904,48 +1275,111 @@ async function removeDoc(id) {
   loadDocs();
 }
 
-/* ─────────────── conversation mode ─────────────── */
-/* Hands-free loop: listen, detect the pause, answer, speak, listen again.
-   Voice activity is plain RMS over the WebAudio analyser. A wasm VAD (Silero) would
-   be more robust, but it needs remote assets and this app has to work offline. */
-let convo = { on: false, ctx: null, stream: null, rec: null, chunks: [], timer: null };
+/* ─────────────── voice conversation ─────────────── */
+/* Its own screen (#view-voice), not a toggle on the chat view: hands-free, the orb
+   carries the state, and the exchange still lands in the chat thread behind it.
+
+   Voice activity is plain RMS over a WebAudio analyser. A wasm VAD (Silero) would be
+   more robust but needs remote assets, and this app has to work with no signal. What
+   makes the hand-rolled version usable outdoors is the adaptive floor below: a fixed
+   threshold is defeated by wind, an engine, or a room of people talking. */
+let convo = {
+  on: false, ctx: null, stream: null, rec: null, chunks: [], timer: null,
+  muted: false, ptt: false, raf: null, floor: 0.012,
+};
+
+const CONVO = {
+  calibrateMs: 400,      // ambient sample at the start of each turn
+  floorMult: 3,          // speech has to stand this far above the room
+  minFloor: 0.04,        // never trust a floor quieter than this
+  minSpeechMs: 350,      // a door slam is not a sentence
+  hangoverMs: 1200,      // silence after speech before we send
+  noSpeechMs: 9000,      // they never started
+  maxTurnMs: 30000,
+};
 
 function toggleConversation() { convo.on ? stopConversation() : startConversation(); }
 
 async function startConversation() {
   try {
-    convo.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    convo.stream = await navigator.mediaDevices.getUserMedia(MIC_CONSTRAINTS);
   } catch {
-    toast("🎤 " + (location.protocol === "https:" ? t("mic_blocked") : t("mic_https")));
+    micError();
     return;
   }
-  convo.on = true;
-  document.getElementById("convo-btn").classList.add("on");
-  const status = document.getElementById("convo-status");
-  status.classList.add("on");
+  convo.on = true; convo.muted = false;
+  document.getElementById("convo-btn")?.classList.add("on");
+  document.getElementById("voice-lang").textContent = I18N[LANG]?._native || LANG.toUpperCase();
+  document.getElementById("voice-mute-label").textContent = t("voice_mute");
+  document.getElementById("voice-end-label").textContent = t("voice_end");
+  document.getElementById("voice-ptt-label").textContent = t("voice_hold");
+  setVoiceCaption("");
+  switchView("voice");
   convoListen();
 }
 
 function stopConversation() {
+  const wasOn = convo.on;
   convo.on = false;
   clearInterval(convo.timer);
+  cancelAnimationFrame(convo.raf);
   try { convo.rec && convo.rec.state !== "inactive" && convo.rec.stop(); } catch {}
   convo.stream?.getTracks().forEach(t0 => t0.stop());
   convo.ctx?.close().catch(() => {});
-  convo.ctx = null; convo.stream = null;
+  convo.ctx = null; convo.stream = null; convo.rec = null;
   document.getElementById("convo-btn")?.classList.remove("on");
-  document.getElementById("convo-status")?.classList.remove("on");
+  orbState("");
   stopSpeaking();
+  if (wasOn && document.getElementById("view-voice").classList.contains("active")) switchView("chat");
+}
+
+/* The mic stays open if the PWA is backgrounded without this. */
+document.addEventListener("visibilitychange", () => { if (document.hidden && convo.on) stopConversation(); });
+window.addEventListener("pagehide", () => { if (convo.on) stopConversation(); });
+
+function toggleConvoMute() {
+  convo.muted = !convo.muted;
+  convo.stream?.getAudioTracks().forEach(tr => tr.enabled = !convo.muted);
+  const b = document.getElementById("voice-mute");
+  b.classList.toggle("muted", convo.muted);
+  b.querySelector("span").textContent = convo.muted ? "🔇" : "🎙️";
+  convoStatus(convo.muted ? "voice_muted" : "listening");
+}
+
+function orbState(state) {
+  const orb = document.getElementById("orb");
+  if (!orb) return;
+  orb.className = "orb" + (state ? " " + state : "");
+  if (state !== "listening" && state !== "speaking") orbScale(1, 1);
+}
+
+function orbScale(ring, ring2) {
+  const a = document.getElementById("orb-ring"), b = document.getElementById("orb-ring-2");
+  if (a) a.style.transform = `scale(${ring})`;
+  if (b) b.style.transform = `scale(${ring2})`;
 }
 
 function convoStatus(key) {
-  const el = document.getElementById("convo-status");
+  const el = document.getElementById("voice-state");
   if (el) el.textContent = t(key);
 }
 
+function setVoiceCaption(html) {
+  const el = document.getElementById("voice-caption");
+  if (el) el.innerHTML = html;
+}
+
+/* ---- the loop: listen -> transcribe -> answer -> speak -> listen ---- */
 async function convoListen() {
   if (!convo.on) return;
-  convoStatus("listening");
+  // Never arm the recorder while the reply is still playing, or the assistant
+  // transcribes its own voice as the farmer's next question.
+  if (currentAudio && !currentAudio.paused && !currentAudio.ended) {
+    return setTimeout(convoListen, 200);
+  }
+  convoStatus(convo.muted ? "voice_muted" : "listening");
+  orbState("listening");
+
   convo.ctx = convo.ctx || new (window.AudioContext || window.webkitAudioContext)();
   const src = convo.ctx.createMediaStreamSource(convo.stream);
   const analyser = convo.ctx.createAnalyser();
@@ -953,34 +1387,37 @@ async function convoListen() {
   src.connect(analyser);
   const buf = new Uint8Array(analyser.fftSize);
 
-  convo.rec = new MediaRecorder(convo.stream);
+  const mime = recorderMime();
+  convo.rec = new MediaRecorder(convo.stream, mime ? { mimeType: mime } : undefined);
   convo.chunks = [];
   convo.rec.ondataavailable = e => convo.chunks.push(e.data);
   convo.rec.onstop = async () => {
     src.disconnect();
     if (!convo.on) return;
-    const blob = new Blob(convo.chunks, { type: "audio/webm" });
+    const blob = new Blob(convo.chunks, { type: convo.rec.mimeType || mime });
     if (blob.size < 3000) return convoListen();          // nothing but room noise
-    convoStatus("transcribing");
-    const fd = new FormData(); fd.append("file", blob, "a.webm");
+    convoStatus("transcribing"); orbState("transcribing");
+    const fd = new FormData();
+    fd.append("file", blob, audioFilename(blob));
+    fd.append("lang", LANG);
     try {
       const r = await (await fetch("/api/transcribe", { method: "POST", body: fd })).json();
       if (!r.text?.trim()) return convoListen();
-      document.getElementById("chat-input").value = r.text;
-      convoStatus("thinking");
-      await sendChat(true);                              // speaks the reply
-      if (convo.on) {
-        const wait = setInterval(() => {
-          if (!currentAudio || currentAudio.ended || currentAudio.paused) {
-            clearInterval(wait); convoListen();
-          }
-        }, 350);
-      }
+      setVoiceCaption(`<div class="vc-you">${esc(r.text)}</div>`);
+      convoStatus("thinking"); orbState("thinking");
+      const reply = await sendChat(true, r.text);          // writes to the chat thread and speaks
+      if (!convo.on) return;
+      if (reply) setVoiceCaption(`<div class="vc-you">${esc(r.text)}</div><div>${esc(reply)}</div>`);
+      convoStatus("speaking"); orbState("speaking");
+      watchSpeaking();
     } catch { convoListen(); }
   };
   convo.rec.start();
 
-  let spoke = false, quietFor = 0, elapsed = 0;
+  // Ambient calibration, then a floor-relative threshold. Quiet kitchen and windy
+  // kraal both end up with a sensible bar to clear.
+  let elapsed = 0, quietFor = 0, speechMs = 0, spoke = false;
+  let calib = [], threshold = CONVO.minFloor;
   clearInterval(convo.timer);
   convo.timer = setInterval(() => {
     if (!convo.on) return clearInterval(convo.timer);
@@ -988,15 +1425,75 @@ async function convoListen() {
     let sum = 0;
     for (let i = 0; i < buf.length; i++) { const v = (buf[i] - 128) / 128; sum += v * v; }
     const rms = Math.sqrt(sum / buf.length);
-    elapsed += 100;
-    if (rms > 0.045) { spoke = true; quietFor = 0; } else if (spoke) { quietFor += 100; }
-    // Stop 1.2s after they stop talking, or bail if they never started.
-    if ((spoke && quietFor > 1200) || (!spoke && elapsed > 9000) || elapsed > 30000) {
+    elapsed += 50;
+
+    if (elapsed <= CONVO.calibrateMs) {
+      calib.push(rms);
+      if (elapsed === CONVO.calibrateMs) {
+        convo.floor = calib.sort((a, b) => a - b)[Math.floor(calib.length / 2)] || 0.012;
+        threshold = Math.max(CONVO.minFloor, convo.floor * CONVO.floorMult);
+      }
+      return;
+    }
+    if (convo.muted) return;
+
+    // Rings track the live level so the orb answers the farmer's actual voice.
+    const level = Math.min(1, rms / (threshold * 2.5));
+    orbScale(1 + level * 0.55, 1 + level * 0.95);
+
+    if (rms > threshold) {
+      speechMs += 50;
+      if (speechMs >= CONVO.minSpeechMs) { spoke = true; quietFor = 0; }
+    } else {
+      speechMs = Math.max(0, speechMs - 50);              // decay, so blips never accumulate
+      if (spoke) quietFor += 50;
+    }
+
+    if ((spoke && quietFor > CONVO.hangoverMs) ||
+        (!spoke && elapsed > CONVO.noSpeechMs) ||
+        elapsed > CONVO.maxTurnMs) {
       clearInterval(convo.timer);
       try { convo.rec.state !== "inactive" && convo.rec.stop(); } catch {}
     }
-  }, 100);
+  }, 50);
 }
+
+/* Bloom the orb in time with the reply, then take the next turn. */
+function watchSpeaking() {
+  cancelAnimationFrame(convo.raf);
+  const tick = () => {
+    if (!convo.on) return;
+    if (!currentAudio || currentAudio.paused || currentAudio.ended) {
+      orbScale(1, 1);
+      return convoListen();
+    }
+    const t0 = currentAudio.currentTime * 7;
+    const pulse = 0.5 + 0.5 * Math.sin(t0);              // no analyser on a blob URL in all browsers
+    orbScale(1 + pulse * 0.4, 1 + pulse * 0.7);
+    convo.raf = requestAnimationFrame(tick);
+  };
+  convo.raf = requestAnimationFrame(tick);
+}
+
+/* Push-to-talk: for wind, or when auto-detection is being stubborn. */
+(() => {
+  const b = document.getElementById("voice-ptt");
+  if (!b) return;
+  const down = e => {
+    e.preventDefault();
+    if (!convo.on) return;
+    b.classList.add("on");
+    clearInterval(convo.timer);                           // take manual control of this turn
+  };
+  const up = e => {
+    e.preventDefault();
+    if (!convo.on) return;
+    b.classList.remove("on");
+    try { convo.rec && convo.rec.state !== "inactive" && convo.rec.stop(); } catch {}
+  };
+  b.addEventListener("mousedown", down); b.addEventListener("touchstart", down, { passive: false });
+  b.addEventListener("mouseup", up); b.addEventListener("touchend", up, { passive: false });
+})();
 
 /* ─────────────── retranslate visible chat ─────────────── */
 async function retranslateChat() {

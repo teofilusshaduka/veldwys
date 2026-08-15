@@ -17,6 +17,16 @@ data/real_grazing.csv
 archive/pictures/
 archive/supportive_material/
 
+# Presentation build output (6 MB; rebuild: python create_presentation.py)
+Indaba_Presentation.pptx
+
+# Stitch design mockups (2.5 MB of exported UI comps, not built by the app)
+stitch_veld_command/
+
+# Loose copies of the notebook photos — the tests read
+# tests/fixtures/notebook/ instead, which holds the same four files.
+tests/*.jpg
+
 # Local tooling
 .claude/
 .idea/

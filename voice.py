@@ -18,12 +18,13 @@ from typing import Dict
 
 import numerals
 
-LANG_NAMES = {"en": "English", "af": "Afrikaans", "ng": "Oshiwambo", "kj": "Otjiherero"}
+LANG_NAMES = {"en": "English", "af": "Afrikaans", "ng": "Oshiwambo (Oshindonga)",
+              "kj": "Oshiwambo (Oshikwanyama)", "hz": "Otjiherero"}
 
 # Voice choices, picked for warmth rather than newsreader polish.
 VOICES = {
-    "female": {"en": "nova", "af": "nova", "ng": "shimmer", "kj": "shimmer"},
-    "male": {"en": "onyx", "af": "onyx", "ng": "ash", "kj": "ash"},
+    "female": {"en": "nova", "af": "nova", "ng": "shimmer", "kj": "shimmer", "hz": "shimmer"},
+    "male": {"en": "onyx", "af": "onyx", "ng": "ash", "kj": "ash", "hz": "ash"},
 }
 
 # Hand-verified spellings the prep pass must reuse verbatim. Teo (native speaker)
@@ -36,6 +37,12 @@ OVERRIDES: Dict[str, Dict[str, str]] = {
         "LSU": "oiyuunga yoimuna",
     },
     "kj": {
+        "N$": "eendola daNamibia",
+        "mm": "omilimita",
+        "ha": "eehekitali",
+        "LSU": "oiyuunga yoimuna",
+    },
+    "hz": {
         "N$": "ozondora zoNamibia",
         "mm": "ozomilimeta",
         "ha": "ozohekitare",
@@ -65,7 +72,13 @@ ACCENT = {
            "English diphthongs. Consonants crisp, sh and mb and nd and ng pronounced fully. Words end "
            "in vowels, so never clip the final vowel. Read every word as Oshiwambo, including numbers "
            "and names. Do not switch to an English accent at any point."),
-    "kj": ("Otjiherero, a Bantu language of central Namibia. Syllable-timed, even and flowing, each "
+    "kj": ("Oshikwanyama, a Bantu language of northern Namibia and southern Angola, closely "
+           "related to Oshindonga. Syllable-timed with even rhythm, every syllable given its full "
+           "value. Pure clean vowels a e i o u as in Spanish or Italian, never English diphthongs. "
+           "Consonants crisp, sh and mb and nd and ng pronounced fully. Words end in vowels, so "
+           "never clip the final vowel. Read every word as Oshikwanyama, including numbers and "
+           "names. Do not switch to an English accent at any point."),
+    "hz": ("Otjiherero, a Bantu language of central Namibia. Syllable-timed, even and flowing, each "
            "syllable clear. Pure vowels a e i o u as in Italian, never English diphthongs. The tj is a "
            "soft ch, the mb nd ng are pronounced as full clusters, and the letter j is a y sound. Words "
            "end in vowels, never clip them. Read every word including numbers as Otjiherero, and never "
@@ -74,6 +87,85 @@ ACCENT = {
 
 def voice_for(lang: str, gender: str) -> str:
     return VOICES.get(gender, VOICES["female"]).get(lang, "nova")
+
+
+# ── Speech recognition ───────────────────────────────────────────────────────
+# Whisper auto-detects language when you don't tell it. On short farm utterances it
+# reads Afrikaans as Dutch or English and starts *translating* rather than
+# transcribing — "hoekom voel my beeste se koppe seer" comes back as English. Where
+# Whisper knows the language, name it.
+ASR_LANG = {"en": "en", "af": "af"}   # ng/kj/hz have no Whisper code — omit, bias by prompt
+
+# The prompt biases Whisper's output vocabulary *and script*. An English prompt pushes
+# it toward English output, so each language gets its hint written in itself.
+ASR_PROMPT = {
+    "en": ("A Namibian farmer talking about livestock and grazing. Cattle, goats, sheep, ewe, ram, "
+           "kapater, kraal, veld, camp, ear tag, vaccination, anthrax, blackleg, grazing, drought, "
+           "rain, borehole, oshana, LSU, hectares."),
+    "af": ("'n Namibiese boer praat oor sy vee en weiding. Beeste, bokke, skape, ooi, ram, kapater, "
+           "hamel, kraal, veld, kamp, oormerk, inenting, miltsiekte, sponssiekte, bloednier, "
+           "bloutong, weiding, droogte, reën, boorgat, drakrag, hektaar, grootvee-eenhede."),
+    "ng": ("Omunafaalama gwaNamibia ta popi kombinga yiimuna yhe nomaulu. Oongombe, iikombo, oonzi, "
+           "onzi, oshikombo, ongombe, ohambo, omaulu, omvula, oluteni, uundjolowele, omagumbo, "
+           "iiyimati, ehala, oshikunino, omeya, ondjuwo yomeya."),
+    "kj": ("Omunafaalama gwaNamibia ota popi kombinga yoimuna yaye neenhele. Eengobe, eekombwe, eedi, "
+           "odi, oshikombo, ongobe, ohambo, eenhele, odula, oluteni, oundjolowele."),
+    "hz": ("Omurise waNamibia ma hungire ohunga nozongombe nomaryo we. Ozongombe, ozongombo, ozonḓu, "
+           "ondu, ongombo, ongombe, otjunda, omaryo, ombura, ouveruke, otjikoro, omeva."),
+}
+
+
+def asr_config(lang: str, force_language: bool = True) -> dict:
+    """Kwargs for the Whisper call: an in-language vocabulary hint, and optionally an
+    explicit language.
+
+    force_language=False is the first pass: we let Whisper tell us what it actually
+    heard. Forcing the UI language on the first pass means a farmer whose app is in
+    English cannot speak Afrikaans — Whisper is told it is English and translates.
+    """
+    cfg = {"prompt": ASR_PROMPT.get(lang, ASR_PROMPT["en"]), "temperature": 0}
+    if force_language and lang in ASR_LANG:
+        cfg["language"] = ASR_LANG[lang]
+    return cfg
+
+
+# Whisper reports the language it detected as an English word.
+DETECTED_TO_CODE = {"afrikaans": "af", "english": "en", "dutch": "af", "german": "af"}
+
+
+# ── Which language is this text actually in? ─────────────────────────────────
+# The UI language and the language of the reply can disagree — a farmer with the
+# app in English can still get an Afrikaans answer. Reading Afrikaans with the
+# English accent instruction is what "sounds nothing like Afrikaans" is. So the
+# text decides the accent, not the label the client sent.
+# Stopwords only: instant, free, no API call, and good enough because these
+# languages share almost no common function words.
+_MARKERS = {
+    "af": {"nie", "die", "jou", "jy", "ek", "het", "is", "en", "van", "vir", "wat",
+           "kan", "moet", "hulle", "hierdie", "maar", "ook", "met", "om", "te",
+           "beeste", "bokke", "skape", "kudde", "kamp", "gras", "weiding", "goed",
+           "baie", "nou", "sal", "was", "word", "meer", "as", "op", "by", "se"},
+    "ng": {"omaulu", "iimuna", "oongombe", "iikombo", "oonzi", "otandi", "oshi",
+           "gwoye", "lyoye", "dhoye", "yoye", "kali", "kaga", "ngashingeyi",
+           "omvula", "ehala", "nawa", "unene", "shoka", "ngele", "opo", "naanaa"},
+    "kj": {"oimuna", "eengobe", "eekombwe", "eedi", "ohandi", "loye", "doye",
+           "odula", "eenhele", "paife", "kali", "nawa", "unene", "ngeenge"},
+    "hz": {"ozongombe", "ozongombo", "ozonḓu", "otjikoro", "omaryo", "ombura",
+           "koye", "roye", "zoye", "tjinene", "nawa", "kaari", "mape", "okambo"},
+}
+
+
+def detect_text_language(text: str, fallback: str = "en") -> str:
+    """Best guess at the language of a reply, from function words alone."""
+    words = set(re.findall(r"[a-zA-ZÀ-ÿḓṱǁ']+", (text or "").lower()))
+    if not words:
+        return fallback
+    scores = {code: len(words & marks) for code, marks in _MARKERS.items()}
+    best = max(scores, key=scores.get)
+    # Two hits is enough to be confident; one could be a loanword or a name.
+    if scores[best] >= 2:
+        return best
+    return fallback
 
 
 def needs_prep(text: str) -> bool:
@@ -88,7 +180,9 @@ MONTHS = {
            "Augustus", "September", "Oktober", "November", "Desember"],
     "ng": ["Januali", "Februali", "Match", "Apilili", "Mei", "Juni", "Juli",
            "Auguste", "Septemba", "Oktoba", "Novemba", "Desemba"],
-    "kj": ["Januari", "Februari", "Marise", "Apriri", "Meye", "Juni", "Juli",
+    "kj": ["Januali", "Februali", "Match", "Apilili", "Mei", "Juni", "Juli",
+           "Auguste", "Septemba", "Oktoba", "Novemba", "Desemba"],
+    "hz": ["Januari", "Februari", "Marise", "Apriri", "Meye", "Juni", "Juli",
            "Auguste", "Septemba", "Oktoba", "Novemba", "Desemba"],
 }
 
@@ -130,10 +224,11 @@ async def prepare_speech(client, text: str, lang: str) -> str:
                        ("ha", OVERRIDES.get(lang, OVERRIDES["en"])["ha"]),
                        ("LSU", OVERRIDES.get(lang, OVERRIDES["en"])["LSU"]),
                        ("kg", {"af": "kilogram", "ng": "ookilograma",
-                               "kj": "ozokilograma"}.get(lang, "kilograms"))):
+                               "kj": "eekilograma", "hz": "ozokilograma"}.get(lang, "kilograms"))):
         out = re.sub(rf"(\d[\d.,]*)\s*{unit}\b", rf"\1 {word}", out)
 
-    percent = {"af": "persent", "ng": "opelesenda", "kj": "opersende"}.get(lang, "percent")
+    percent = {"af": "persent", "ng": "opelesenda", "kj": "opelesenda",
+               "hz": "opersende"}.get(lang, "percent")
     out = re.sub(r"(\d[\d.,]*)\s*%", rf"\1 {percent}", out)
 
     # Finally every remaining number becomes words in the target language.

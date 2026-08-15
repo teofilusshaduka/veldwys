@@ -1,6 +1,8 @@
 import sqlite3
 import os
 import hashlib
+import hmac
+import secrets
 from typing import Optional, Dict, Any, List
 import datetime
 
@@ -118,24 +120,76 @@ def init_db():
             # Protocol-generated reminders carry a key so the UI can translate them
             "ALTER TABLE animal_events ADD COLUMN tkey TEXT DEFAULT ''",
             "ALTER TABLE chat_history ADD COLUMN chat_id INTEGER DEFAULT NULL",
+            # Password recovery. password_salt empty means the row is still on the
+            # legacy unsalted SHA-256 scheme; verify_user upgrades it on next login.
+            "ALTER TABLE users ADD COLUMN password_salt TEXT DEFAULT ''",
+            "ALTER TABLE users ADD COLUMN recovery_question TEXT DEFAULT ''",
+            "ALTER TABLE users ADD COLUMN recovery_answer_hash TEXT DEFAULT ''",
+            "ALTER TABLE users ADD COLUMN recovery_answer_salt TEXT DEFAULT ''",
+            # Colour and markings — how a farmer actually identifies an animal, and a
+            # different thing from breed, which the notebook usually doesn't state.
+            "ALTER TABLE animals ADD COLUMN description TEXT DEFAULT ''",
+            # Castrated males (kapater, hamel, wether, os) are a normal part of a
+            # small-stock register and had nowhere to go in sex=male|female.
+            "ALTER TABLE animals ADD COLUMN castrated INTEGER DEFAULT 0",
         ):
             try:
                 cursor.execute(stmt)
             except sqlite3.OperationalError:
                 pass
+
+        # One-off data migrations. These change rows rather than schema, so unlike the
+        # ALTERs above they are not self-guarding — a flag table records what has run.
+        cursor.execute("CREATE TABLE IF NOT EXISTS schema_flags (flag TEXT PRIMARY KEY)")
+        done = {r[0] for r in cursor.execute("SELECT flag FROM schema_flags")}
+        # 'kj' used to mean Otjiherero here, but kj is Oshikwanyama's ISO code and that
+        # language now occupies it. Existing Otjiherero profiles move to the correct
+        # code 'hz'. This must run exactly once, or genuine Oshikwanyama users would be
+        # converted to Otjiherero on every restart.
+        if "lang_kj_to_hz" not in done:
+            cursor.execute("UPDATE users SET language='hz' WHERE language='kj'")
+            cursor.execute("INSERT INTO schema_flags (flag) VALUES ('lang_kj_to_hz')")
         conn.commit()
 
 
-def hash_password(password: str) -> str:
+PBKDF2_ROUNDS = 200_000
+
+
+def legacy_hash_password(password: str) -> str:
+    """The original unsalted SHA-256. Kept only so existing logins still work."""
     return hashlib.sha256(password.encode()).hexdigest()
 
 
+def hash_password(password: str, salt: Optional[str] = None) -> tuple:
+    """PBKDF2-HMAC-SHA256. Returns (hash_hex, salt_hex)."""
+    salt = salt or secrets.token_hex(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(salt),
+                                 PBKDF2_ROUNDS)
+    return digest.hex(), salt
+
+
+def _password_matches(password: str, stored_hash: str, stored_salt: str) -> bool:
+    if stored_salt:
+        candidate, _ = hash_password(password, stored_salt)
+        return hmac.compare_digest(candidate, stored_hash)
+    return hmac.compare_digest(legacy_hash_password(password), stored_hash)
+
+
+def set_password(user_id: int, password: str) -> None:
+    pw_hash, salt = hash_password(password)
+    with _conn() as conn:
+        conn.execute("UPDATE users SET password_hash = ?, password_salt = ? WHERE id = ?",
+                     (pw_hash, salt, user_id))
+        conn.commit()
+
+
 def create_user(username: str, password: str) -> bool:
+    pw_hash, salt = hash_password(password)
     try:
         with _conn() as conn:
             conn.execute(
-                "INSERT INTO users (username, password_hash) VALUES (?, ?)",
-                (username, hash_password(password))
+                "INSERT INTO users (username, password_hash, password_salt) VALUES (?, ?, ?)",
+                (username, pw_hash, salt)
             )
             conn.commit()
             return True
@@ -146,10 +200,56 @@ def create_user(username: str, password: str) -> bool:
 def verify_user(username: str, password: str) -> Optional[int]:
     with _conn() as conn:
         row = conn.execute(
-            "SELECT id FROM users WHERE username = ? AND password_hash = ?",
-            (username, hash_password(password))
+            "SELECT id, password_hash, password_salt FROM users WHERE username = ?",
+            (username,)
         ).fetchone()
-        return row["id"] if row else None
+    if not row or not _password_matches(password, row["password_hash"], row["password_salt"] or ""):
+        return None
+    # Legacy row: silently re-hash into the salted scheme now that we have the plaintext.
+    if not (row["password_salt"] or ""):
+        set_password(row["id"], password)
+    return row["id"]
+
+
+# ── Password recovery ───────────────────────────────────────────────────────
+# There is no email or phone on a user, and no SMS provider, so a question the
+# farmer chose at signup is the only recovery route that actually works offline-first.
+
+def _norm_answer(answer: str) -> str:
+    """Answers are typed months apart on a phone keyboard; case and spacing are noise."""
+    return " ".join(str(answer or "").lower().split())
+
+
+def set_recovery(user_id: int, question: str, answer: str) -> bool:
+    if not question.strip() or not _norm_answer(answer):
+        return False
+    ans_hash, salt = hash_password(_norm_answer(answer))
+    with _conn() as conn:
+        conn.execute("UPDATE users SET recovery_question=?, recovery_answer_hash=?, "
+                     "recovery_answer_salt=? WHERE id=?",
+                     (question.strip(), ans_hash, salt, user_id))
+        conn.commit()
+    return True
+
+
+def get_recovery_question(username: str) -> Optional[str]:
+    with _conn() as conn:
+        row = conn.execute("SELECT recovery_question FROM users WHERE username=?",
+                           (username,)).fetchone()
+    return (row["recovery_question"] or "") if row else None
+
+
+def reset_with_recovery(username: str, answer: str, new_password: str) -> bool:
+    with _conn() as conn:
+        row = conn.execute("SELECT id, recovery_answer_hash, recovery_answer_salt "
+                           "FROM users WHERE username=?", (username,)).fetchone()
+    if not row or not row["recovery_answer_hash"]:
+        return False
+    if not _password_matches(_norm_answer(answer), row["recovery_answer_hash"],
+                             row["recovery_answer_salt"] or ""):
+        return False
+    set_password(row["id"], new_password)
+    return True
 
 
 def update_profile(user_id: int, region: str, lat: Optional[float], lon: Optional[float],
@@ -303,18 +403,22 @@ def delete_document(user_id: int, doc_id: int):
 
 def add_animal(user_id: int, tag: str = "", name: str = "", species: str = "cattle",
                breed: str = "", sex: str = "", dob: str = "", notes: str = "",
-               photo_path: str = "", status: str = "active") -> int:
+               photo_path: str = "", status: str = "active",
+               description: str = "", castrated: bool = False) -> int:
     with _conn() as conn:
         cur = conn.execute('''
-            INSERT INTO animals (user_id, tag, name, species, breed, sex, dob, notes, photo_path, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (user_id, tag, name, species.lower(), breed, sex, dob, notes, photo_path, status))
+            INSERT INTO animals (user_id, tag, name, species, breed, sex, dob, notes,
+                                 photo_path, status, description, castrated)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (user_id, tag, name, species.lower(), breed, sex, dob, notes, photo_path,
+              status, description, 1 if castrated else 0))
         conn.commit()
         return cur.lastrowid
 
 
 def update_animal(user_id: int, animal_id: int, **fields) -> bool:
-    allowed = {"tag", "name", "species", "breed", "sex", "dob", "notes", "photo_path", "status"}
+    allowed = {"tag", "name", "species", "breed", "sex", "dob", "notes", "photo_path",
+               "status", "description", "castrated"}
     updates = {k: v for k, v in fields.items() if k in allowed and v is not None}
     if not updates:
         return False

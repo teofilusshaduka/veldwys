@@ -24,11 +24,27 @@ NG = {
              "omilongo hetatu", "omilongo omugoyi"],
     "hundred": "ethele", "hundreds": "omathele",
     "thousand": "eyuvi", "thousands": "omayuvi",
-    "and": "na", "zero": "oshimwe inaashi kala", "point": "okatoni",
+    # "oshimwe inaashi kala" was not a word for zero. Namibian speakers say nulu, and
+    # a decimal point is read komma, as in Afrikaans.
+    "and": "na", "zero": "nulu", "point": "komma",
+}
+
+# ── Oshiwambo (Oshikwanyama) ─────────────────────────────────────────────────
+# Same counting system as Oshindonga, different concords and a few different stems.
+KJ = {
+    "units": ["", "umwe", "vali", "vatatu", "vane", "vatano",
+              "vahamano", "vaheyali", "vahetatu", "vomugoi"],
+    "ten": "omulongo",
+    "tens": ["", "omulongo", "omilongo ivali", "omilongo itatu", "omilongo ine",
+             "omilongo itano", "omilongo ihamano", "omilongo iheyali",
+             "omilongo ihetatu", "omilongo omugoi"],
+    "hundred": "efele", "hundreds": "omafele",
+    "thousand": "eyovi", "thousands": "omayovi",
+    "and": "na", "zero": "nulu", "point": "komma",
 }
 
 # ── Otjiherero ───────────────────────────────────────────────────────────────
-KJ = {
+HZ = {
     "units": ["", "imwe", "mbari", "ndatu", "ine", "ndano",
               "hamboumwe", "hambombari", "hambondatu", "muvyu"],
     "ten": "omurongo",
@@ -37,7 +53,7 @@ KJ = {
              "omirongo hambondatu", "omirongo muvyu"],
     "hundred": "esere", "hundreds": "omasere",
     "thousand": "eyovi", "thousands": "omayovi",
-    "and": "na", "zero": "kapena", "point": "okatoni",
+    "and": "na", "zero": "kapena", "point": "komma",
 }
 
 # ── Afrikaans ────────────────────────────────────────────────────────────────
@@ -126,17 +142,17 @@ def number_to_words(n: int, lang: str) -> str:
         return "-" + number_to_words(-n, lang)
     if n > 999999:                      # beyond anything a herd or a price needs
         return str(n)
-    if lang == "ng":
-        return _bantu(n, NG)
-    if lang == "kj":
-        return _bantu(n, KJ)
+    table = {"ng": NG, "kj": KJ, "hz": HZ}.get(lang)
+    if table:
+        return _bantu(n, table)
     if lang == "af":
         return _afrikaans(n)
     return _english(n)
 
 
 def decimal_to_words(whole: int, frac: str, lang: str) -> str:
-    """3.4 -> 'three comma four'. Namibians say komma, Bantu languages take okatoni."""
-    joiner = {"af": "komma", "ng": NG["point"], "kj": KJ["point"]}.get(lang, "point")
+    """3.4 -> 'three comma four'. Namibians say komma across all four local languages."""
+    joiner = {"af": "komma", "ng": NG["point"], "kj": KJ["point"],
+              "hz": HZ["point"]}.get(lang, "point")
     frac_words = " ".join(number_to_words(int(d), lang) for d in frac if d.isdigit())
     return f"{number_to_words(whole, lang)} {joiner} {frac_words}"

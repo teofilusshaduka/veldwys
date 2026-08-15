@@ -1,0 +1,154 @@
+{
+  "A_headerless_reordered.png": {
+    "record_type": "individual_animals",
+    "animals": [
+      {
+        "tag": "NK 104",
+        "species": "sheep",
+        "sex": "female",
+        "castrated": false
+      },
+      {
+        "tag": "NK 105",
+        "species": "sheep",
+        "sex": "male",
+        "castrated": false
+      },
+      {
+        "tag": "NK 106",
+        "species": "sheep",
+        "sex": "male",
+        "castrated": true
+      },
+      {
+        "tag": "NK 107",
+        "species": "sheep",
+        "sex": "female",
+        "castrated": false
+      },
+      {
+        "tag": "NK 109",
+        "species": "sheep",
+        "sex": "female",
+        "castrated": false
+      },
+      {
+        "tag": "NK 110",
+        "species": "sheep",
+        "sex": "male",
+        "castrated": true
+      }
+    ],
+    "must_not_contain_tags": [
+      "NK 108",
+      "081 447 2210"
+    ]
+  },
+  "B_freetext_list.png": {
+    "record_type": "individual_animals",
+    "animals": [
+      {
+        "tag": "G12",
+        "species": "goat",
+        "sex": "female",
+        "castrated": false
+      },
+      {
+        "tag": "G13",
+        "species": "goat",
+        "sex": "female",
+        "castrated": false
+      },
+      {
+        "tag": "G14",
+        "species": "goat",
+        "sex": "male",
+        "castrated": false
+      },
+      {
+        "tag": "G15",
+        "species": "goat",
+        "sex": "female",
+        "castrated": false
+      },
+      {
+        "tag": "",
+        "species": "goat",
+        "sex": "female",
+        "castrated": false
+      },
+      {
+        "tag": "G17",
+        "species": "goat",
+        "sex": "male",
+        "castrated": true
+      }
+    ]
+  },
+  "C_event_log.png": {
+    "record_type": "event_log",
+    "animals": [],
+    "min_events": 4,
+    "note": "the page names no individual animals to register; B22 is referenced, not listed"
+  },
+  "D_tally_counts.png": {
+    "record_type": "tally_counts",
+    "animals": [],
+    "max_animals": 0,
+    "min_events": 3,
+    "note": "counts only \u2014 inventing 226 animal records here would be the failure"
+  },
+  "E_afrikaans_headers.png": {
+    "record_type": "individual_animals",
+    "animals": [
+      {
+        "tag": "OV 21",
+        "species": "cattle",
+        "sex": "female",
+        "castrated": false,
+        "breed": "Brahman"
+      },
+      {
+        "tag": "OV 22",
+        "species": "cattle",
+        "sex": "male",
+        "castrated": false,
+        "breed": "Nguni"
+      },
+      {
+        "tag": "OV 23",
+        "species": "cattle",
+        "sex": "male",
+        "castrated": true,
+        "breed": "Brahman"
+      },
+      {
+        "tag": "OV 24",
+        "species": "cattle",
+        "sex": "female",
+        "castrated": false,
+        "breed": "Nguni"
+      },
+      {
+        "tag": "OV 25",
+        "species": "cattle",
+        "sex": "female",
+        "castrated": false
+      }
+    ]
+  },
+  "F_printed_card.png": {
+    "record_type": "individual_animals",
+    "animals": [
+      {
+        "tag": "DR 0091",
+        "species": "sheep",
+        "sex": "female",
+        "castrated": false,
+        "breed": "Dorper",
+        "dob": "2024-08-15"
+      }
+    ],
+    "min_events": 1
+  }
+}

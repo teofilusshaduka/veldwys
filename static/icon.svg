@@ -1,18 +1,19 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="110" fill="#465c2b"/>
-  <path d="M0 330 C90 300 150 350 256 335 C360 320 430 355 512 330 L512 512 L0 512 Z" fill="#3a4d24"/>
-  <g fill="#c9b98a">
-    <path d="M120 340 q8-70 20-110 q12 40 20 110 z"/>
-    <path d="M175 345 q6-60 16-95 q10 35 16 95 z"/>
-    <path d="M330 345 q6-60 16-95 q10 35 16 95 z"/>
-    <path d="M385 340 q8-70 20-110 q12 40 20 110 z"/>
+  <rect width="512" height="512" rx="64" fill="#F5F5F0"/>
+  <g transform="translate(256,256)" fill="none" stroke="#2D2D2D" stroke-width="24" stroke-linecap="square" stroke-linejoin="miter">
+    <!-- V shape -->
+    <path d="M-110,-80 L0,100 L110,-80"/>
+    <!-- W crossbar -->
+    <line x1="-120" y1="-20" x2="120" y2="-20"/>
+    <!-- Compass circle -->
+    <circle cx="0" cy="-20" r="55"/>
+    <!-- Vertical arrow -->
+    <line x1="0" y1="60" x2="0" y2="-130"/>
+    <!-- Arrow head -->
+    <path d="M-20,-110 L0,-145 L20,-110" fill="#2D2D2D"/>
+    <!-- Crosshair ticks -->
+    <line x1="-45" y1="-20" x2="-65" y2="-20"/>
+    <line x1="45" y1="-20" x2="65" y2="-20"/>
+    <line x1="0" y1="25" x2="0" y2="45"/>
   </g>
-  <ellipse cx="256" cy="250" rx="86" ry="66" fill="#f2ece0"/>
-  <ellipse cx="256" cy="288" rx="42" ry="30" fill="#e0d5c0"/>
-  <circle cx="230" cy="240" r="11" fill="#2b2a26"/>
-  <circle cx="282" cy="240" r="11" fill="#2b2a26"/>
-  <circle cx="240" cy="290" r="7" fill="#b9a98f"/>
-  <circle cx="272" cy="290" r="7" fill="#b9a98f"/>
-  <path d="M170 205 q-40-30-28-62 q34 4 52 42 z" fill="#c27d38"/>
-  <path d="M342 205 q40-30 28-62 q-34 4-52 42 z" fill="#c27d38"/>
 </svg>

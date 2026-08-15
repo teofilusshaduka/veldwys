@@ -3,26 +3,36 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-<meta name="theme-color" content="#465c2b">
+<meta name="theme-color" content="#2D2D2D">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="VeldWys">
 <title>VeldWys — Farm Command Centre</title>
 <link rel="manifest" href="/manifest.json">
 <link rel="apple-touch-icon" href="/static/icon.svg">
+<link href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <link rel="stylesheet" href="/static/styles.css">
+<style>.material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24; font-size: 24px; }</style>
 </head>
 <body>
 
 <header>
   <div class="brand">
-    <span>🐄</span>
+    <span class="material-symbols-outlined" style="font-size:28px;">agriculture</span>
     <div>
-      <div>VeldWys</div>
+      <div>FARM COMMAND</div>
       <div class="brand-sub" id="farm-label"></div>
     </div>
   </div>
+  <nav class="desktop-nav" id="desktop-nav">
+    <a id="dnav-dashboard" onclick="switchView('dashboard')" class="active"><span class="material-symbols-outlined">dashboard</span><span>DASHBOARD</span></a>
+    <a id="dnav-herd" onclick="switchView('herd')"><span class="material-symbols-outlined">pets</span><span>HERD</span></a>
+    <a id="dnav-chat" onclick="switchView('chat')"><span class="material-symbols-outlined">chat</span><span>ADVISOR</span></a>
+    <a id="dnav-analytics" onclick="switchView('analytics')"><span class="material-symbols-outlined">monitoring</span><span>ANALYTICS</span></a>
+    <a id="dnav-settings" onclick="switchView('settings')"><span class="material-symbols-outlined">settings</span><span>SETTINGS</span></a>
+  </nav>
   <div class="header-actions">
     <button class="lang-badge" id="lang-badge" onclick="openLangPicker()">EN</button>
   </div>
@@ -33,7 +43,7 @@
 <div id="view-auth" class="view active">
   <div class="content-scroll" style="display:flex;flex-direction:column;justify-content:center;">
     <div class="form-container glass">
-      <div style="text-align:center;font-size:46px;margin-bottom:10px;">🌾</div>
+      <div style="text-align:center;margin-bottom:10px;"><span class="material-symbols-outlined" style="font-size:48px;color:#A3432C;">agriculture</span></div>
       <h2 id="auth-title" data-i18n="welcome_title"></h2>
       <p class="subtitle" id="auth-subtitle" data-i18n="welcome_sub"></p>
       <ul class="cap-list" id="cap-list">
@@ -42,8 +52,18 @@
       </ul>
       <input type="text" id="username" data-i18n-ph="username" autocomplete="username">
       <input type="password" id="password" data-i18n-ph="password" autocomplete="current-password">
+
+      <!-- Only shown when signing up. There is no email on a user, so a question they
+           choose here is the only way back in later. -->
+      <div id="recovery-setup" style="display:none;">
+        <label class="field" data-i18n="recovery_q_label"></label>
+        <select id="recovery-question"></select>
+        <input type="text" id="recovery-answer" data-i18n-ph="recovery_a_ph" autocomplete="off">
+      </div>
+
       <button class="btn-primary" id="auth-btn" onclick="doAuth()" data-i18n="signin"></button>
       <button class="btn-text" id="auth-toggle" onclick="toggleAuthMode()" data-i18n="no_account"></button>
+      <button class="btn-text" id="forgot-link" onclick="openForgot()" data-i18n="forgot_password"></button>
       <div id="auth-error" style="color:var(--red);font-size:13.5px;text-align:center;margin-top:10px;display:none;font-weight:650;"></div>
     </div>
   </div>
@@ -70,9 +90,21 @@
         <p class="subtitle" data-i18n="farm_where_sub"></p>
         <label class="field" data-i18n="farm_name"></label>
         <input type="text" id="ob-farmname" data-i18n-ph="farm_name_ph">
+
+        <button class="btn-locate" id="ob-locate" onclick="useMyLocation(true)">
+          <span class="material-symbols-outlined" style="font-size:18px;">my_location</span><span data-i18n="use_my_location"></span></button>
+        <div class="locate-msg" id="ob-locate-msg"></div>
+
+        <div class="place-search">
+          <input type="search" id="ob-place" data-i18n-ph="search_place" autocomplete="off"
+                 oninput="onPlaceSearch(true, this.value)">
+          <div class="place-results" id="ob-place-results"></div>
+        </div>
+
         <div id="ob-map"></div>
-        <div class="region-tag" id="ob-region" style="display:none;">📍 <span></span></div>
+        <div class="region-tag" id="ob-region" style="display:none;"><span class="material-symbols-outlined" style="font-size:16px;">location_on</span> <span></span></div>
         <input type="hidden" id="ob-lat"><input type="hidden" id="ob-lon">
+        <div class="ob-error" id="ob-step2-err"></div>
         <button class="btn-primary" onclick="obStep(3)" data-i18n="next"></button>
         <button class="btn-text" onclick="obStep(1)" data-i18n="back"></button>
       </div>
@@ -92,7 +124,7 @@
       </div>
 
       <div id="ob-step-4" class="ob-step">
-        <div style="text-align:center;font-size:44px;margin-bottom:10px;">💉</div>
+        <div style="text-align:center;margin-bottom:10px;"><span class="material-symbols-outlined" style="font-size:44px;color:#7B8C70;">vaccines</span></div>
         <h2 data-i18n="vacc_title"></h2>
         <p class="subtitle" data-i18n="vacc_sub"></p>
         <button class="btn-primary" onclick="finishOnboarding(true)" data-i18n="vacc_yes"></button>
@@ -100,7 +132,7 @@
       </div>
 
       <div id="ob-step-5" class="ob-step" style="text-align:center;">
-        <div style="font-size:56px;margin-bottom:14px;">🌾</div>
+        <div style="margin-bottom:14px;"><span class="material-symbols-outlined" style="font-size:56px;color:#7B8C70;">check_circle</span></div>
         <h2 data-i18n="ob_done_title"></h2>
         <p class="subtitle" data-i18n="ob_done_sub"></p>
         <button class="btn-primary" onclick="switchView('dashboard')" data-i18n="go_dash"></button>
@@ -112,13 +144,13 @@
 <!-- ══════════ DASHBOARD ══════════ -->
 <div id="view-dashboard" class="view">
   <div class="content-scroll">
-    <button class="brief-btn" onclick="playBriefing()"><span id="brief-icon">🔊</span> <span data-i18n="brief_play"></span></button>
+    <button class="brief-btn" onclick="playBriefing()"><span id="brief-icon" class="material-symbols-outlined" style="font-size:20px;">volume_up</span> <span data-i18n="brief_play"></span></button>
     <div class="brief-text" id="brief-text"></div>
 
     <div class="section-label" data-i18n="alerts"></div>
     <div id="insights-list"><div class="empty">…</div></div>
 
-    <div class="section-label" style="margin-top:24px;">📊 <span data-i18n="herd_title_tab"></span></div>
+    <div class="section-label" style="margin-top:24px;"><span class="material-symbols-outlined" style="font-size:16px;vertical-align:-3px;">monitoring</span> <span data-i18n="herd_title_tab"></span></div>
     <div class="stat-grid">
       <div class="stat-card"><div class="val" id="s-animals">0</div><div class="lbl" data-i18n="stat_animals"></div></div>
       <div class="stat-card"><div class="val" id="s-lsu">0</div><div class="lbl" data-i18n="stat_lsu"></div></div>
@@ -128,10 +160,10 @@
 
     <div class="section-label" data-i18n="quick_actions"></div>
     <div class="qa-grid">
-      <button class="qa-btn" onclick="openAnimalModal()"><span class="ico">🐄</span><span data-i18n="add_animal"></span></button>
-      <button class="qa-btn" onclick="openScan()"><span class="ico">📓</span><span data-i18n="scan_notebook"></span></button>
-      <button class="qa-btn" onclick="openEventModal()"><span class="ico">📝</span><span data-i18n="log_event"></span></button>
-      <button class="qa-btn" onclick="exportCsv()"><span class="ico">📤</span><span data-i18n="export_csv"></span></button>
+      <button class="qa-btn" onclick="openAnimalModal()"><span class="material-symbols-outlined">add_circle</span><span data-i18n="add_animal"></span></button>
+      <button class="qa-btn" onclick="openScan()"><span class="material-symbols-outlined">document_scanner</span><span data-i18n="scan_notebook"></span></button>
+      <button class="qa-btn" onclick="openEventModal()"><span class="material-symbols-outlined">edit_note</span><span data-i18n="log_event"></span></button>
+      <button class="qa-btn" onclick="exportCsv()"><span class="material-symbols-outlined">download</span><span data-i18n="export_csv"></span></button>
     </div>
 
     <div class="section-label" data-i18n="upcoming"></div>
@@ -162,20 +194,44 @@
 <!-- ══════════ CHAT ══════════ -->
 <div id="view-chat" class="view">
   <div class="chat-bar">
-    <button class="chat-bar-btn" onclick="openChatDrawer()" title="Chats">☰</button>
+    <button class="chat-bar-btn" onclick="openChatDrawer()" title="Chats"><span class="material-symbols-outlined" style="font-size:18px;">menu</span></button>
     <div class="chat-title" id="chat-title"></div>
-    <button class="chat-bar-btn" onclick="startNewChat()" title="New">✚</button>
-    <button class="chat-bar-btn" id="convo-btn" onclick="toggleConversation()" title="Conversation">🎧</button>
+    <button class="chat-bar-btn" onclick="startNewChat()" title="New"><span class="material-symbols-outlined" style="font-size:18px;">add</span></button>
+    <button class="chat-bar-btn" id="convo-btn" onclick="toggleConversation()" title="Conversation"><span class="material-symbols-outlined" style="font-size:18px;">headphones</span></button>
   </div>
   <div class="chat-scroll" id="chat"></div>
-  <div id="convo-status" class="convo-status"></div>
   <div class="chips-row" id="chips-row"></div>
   <div class="chat-input-container">
-    <button class="attach-btn" onclick="document.getElementById('doc-file').click()" title="Attach">📎</button>
+    <button class="attach-btn" onclick="document.getElementById('doc-file').click()" title="Attach"><span class="material-symbols-outlined" style="font-size:22px;">attach_file</span></button>
     <input type="file" id="doc-file" accept=".txt,.md,.csv,.pdf,image/*" style="display:none" onchange="uploadDoc()">
     <input type="text" id="chat-input" data-i18n-ph="chat_ph" onkeypress="if(event.key==='Enter')sendChat()">
-    <button class="mic-btn" id="mic-btn">🎙️</button>
-    <button class="send-btn" onclick="sendChat()">➤</button>
+    <button class="mic-btn" id="mic-btn"><span class="material-symbols-outlined" style="font-size:24px;">mic</span></button>
+    <button class="send-btn" onclick="sendChat()"><span class="material-symbols-outlined" style="font-size:22px;">send</span></button>
+  </div>
+</div>
+
+<!-- ══════════ VOICE CONVERSATION ══════════ -->
+<!-- Full screen on purpose: hands-free, read from arm's length, in sun. -->
+<div id="view-voice" class="view">
+  <div class="voice-top">
+    <span class="voice-lang" id="voice-lang"></span>
+    <button class="voice-min" onclick="stopConversation()" title="Back"><span class="material-symbols-outlined">close</span></button>
+  </div>
+
+  <div class="voice-stage">
+    <div class="orb" id="orb">
+      <div class="orb-ring" id="orb-ring"></div>
+      <div class="orb-ring orb-ring-2" id="orb-ring-2"></div>
+      <div class="orb-core"></div>
+    </div>
+    <div class="voice-state" id="voice-state"></div>
+    <div class="voice-caption" id="voice-caption"></div>
+  </div>
+
+  <div class="voice-controls">
+    <button class="voice-btn" id="voice-mute" onclick="toggleConvoMute()"><span class="material-symbols-outlined">mic</span><small id="voice-mute-label"></small></button>
+    <button class="voice-btn voice-end" onclick="stopConversation()"><span class="material-symbols-outlined">close</span><small id="voice-end-label"></small></button>
+    <button class="voice-btn" id="voice-ptt"><span class="material-symbols-outlined">touch_app</span><small id="voice-ptt-label"></small></button>
   </div>
 </div>
 
@@ -212,10 +268,8 @@
       <label class="field" data-i18n="farm_name"></label>
       <input type="text" id="p-farmname">
       <label class="field" data-i18n="language"></label>
-      <select id="p-lang" onchange="pickLang(this.value);saveLangPref(this.value);">
-        <option value="en">English</option><option value="af">Afrikaans</option>
-        <option value="ng">Oshiwambo</option><option value="kj">Otjiherero</option>
-      </select>
+      <!-- Options are generated from I18N so a new language never has to be added twice. -->
+      <select id="p-lang" onchange="pickLang(this.value);saveLangPref(this.value);"></select>
     </div>
 
     <div class="card">
@@ -240,8 +294,16 @@
     <div class="card">
       <h3 data-i18n="land_title"></h3>
       <label class="field" data-i18n="location"></label>
+      <button class="btn-locate" id="p-locate" onclick="useMyLocation(false)">
+        <span class="material-symbols-outlined" style="font-size:18px;">my_location</span><span data-i18n="use_my_location"></span></button>
+      <div class="locate-msg" id="p-locate-msg"></div>
+      <div class="place-search">
+        <input type="search" id="p-place" data-i18n-ph="search_place" autocomplete="off"
+               oninput="onPlaceSearch(false, this.value)">
+        <div class="place-results" id="p-place-results"></div>
+      </div>
       <div id="map"></div>
-      <div class="region-tag" id="p-region">📍 <span></span></div>
+      <div class="region-tag" id="p-region"><span class="material-symbols-outlined" style="font-size:16px;">location_on</span> <span></span></div>
       <input type="hidden" id="p-lat"><input type="hidden" id="p-lon">
       <label class="field" data-i18n="camp_area"></label>
       <input type="number" inputmode="numeric" id="p-area">
@@ -271,11 +333,11 @@
 
 <!-- ══════════ NAV ══════════ -->
 <div class="bottom-nav">
-  <div class="nav-item active" id="nav-dashboard" onclick="switchView('dashboard')"><span class="nav-icon">🏡</span><span data-i18n="nav_home"></span></div>
-  <div class="nav-item" id="nav-herd" onclick="switchView('herd')"><span class="nav-icon">🐄</span><span data-i18n="nav_herd"></span></div>
-  <div class="nav-item" id="nav-chat" onclick="switchView('chat')"><span class="nav-icon">💬</span><span data-i18n="nav_chat"></span></div>
-  <div class="nav-item" id="nav-analytics" onclick="switchView('analytics')"><span class="nav-icon">📈</span><span data-i18n="nav_analytics"></span></div>
-  <div class="nav-item" id="nav-settings" onclick="switchView('settings')"><span class="nav-icon">⚙️</span><span data-i18n="nav_settings"></span></div>
+  <div class="nav-item active" id="nav-dashboard" onclick="switchView('dashboard')"><span class="material-symbols-outlined">dashboard</span><span data-i18n="nav_home"></span></div>
+  <div class="nav-item" id="nav-herd" onclick="switchView('herd')"><span class="material-symbols-outlined">pets</span><span data-i18n="nav_herd"></span></div>
+  <div class="nav-item" id="nav-chat" onclick="switchView('chat')"><span class="material-symbols-outlined">chat</span><span data-i18n="nav_chat"></span></div>
+  <div class="nav-item" id="nav-analytics" onclick="switchView('analytics')"><span class="material-symbols-outlined">monitoring</span><span data-i18n="nav_analytics"></span></div>
+  <div class="nav-item" id="nav-settings" onclick="switchView('settings')"><span class="material-symbols-outlined">settings</span><span data-i18n="nav_settings"></span></div>
 </div>
 
 <!-- ══════════ MODALS ══════════ -->
@@ -284,6 +346,7 @@
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="/static/i18n.js"></script>
+<script src="/static/places.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>
